@@ -85,6 +85,7 @@ DoubleAttributesChecked <- function(cova1, cova2)
 ##@getEffects DataCreate create effects object
 getEffects <- function(x, nintn = 10, behNintn=4, getDocumentation=FALSE, onePeriodSde=FALSE)
 {
+  
 	##@duplicateDataFrameRow internal getEffects Put period numbers in
 	duplicateDataFrameRow <- function(x, n)
 	{
@@ -99,6 +100,44 @@ getEffects <- function(x, nintn = 10, behNintn=4, getDocumentation=FALSE, onePer
 		}
 		tmp
 	}
+	
+	## Update for threeway (using onemode and slice)
+	## threeway slice helpers ---------------------------------------------
+	getThreeWaySlices <- function(depvar) {
+	  if (is.array(depvar) && length(dim(depvar)) == 4) {
+	    # depvar[ slice, i, j, time ]
+	    list(
+	      nslices = dim(depvar)[1],
+	      getter  = function(k) depvar[k, , , , drop = FALSE]  # returns [i,j,time]
+	    )
+	  } else if (is.list(depvar)) {
+	    # Each element of the list is itself a 3D array [i,j,time]
+	    list(
+	      nslices = length(depvar),
+	      getter  = function(k) depvar[[k]]
+	    )
+	  } else {
+	    stop("threeway depvar must be a 4D array (slice,i,j,time) or list of 3D arrays.")
+	  }
+	}
+	
+	coerceSliceToOneMode <- function(parent_depvar, slice_array) {
+	  dv <- slice_array
+	  at <- attributes(parent_depvar)
+	  for (nm in names(at)) attr(dv, nm) <- at[[nm]]
+	  attr(dv, "type") <- "oneMode"
+	  
+	  ns <- attr(parent_depvar, "nodeSet")
+	  if (length(ns) >= 1)
+	    attr(dv, "nodeSet") <- if (length(ns) == 1) ns else ns[[1]]
+	  
+	  if (is.null(attr(dv, "symmetric"))) {
+	    first_mat <- dv[ , , 1, drop = TRUE]
+	    attr(dv, "symmetric") <- isTRUE(all(first_mat == t(first_mat)))
+	  }
+	  dv
+	}
+	
 
 	##@networkRateEffects internal getEffects create a set of rate effects
 	networkRateEffects <- function(depvar, varname, symmetric, bipartite)
@@ -550,6 +589,30 @@ getEffects <- function(x, nintn = 10, behNintn=4, getDocumentation=FALSE, onePer
 			starts=starts, settingsDescription=settingsDescription)
 	}
 
+	##@threeWayNet internal getEffects
+	## Reuse oneModeNet on per-slice views of a threeway network
+	threeWayNet <- function(depvar, varname)
+	{
+	  sl <- .getThreeWaySlices(depvar)
+	  allEffects <- NULL
+	  allStarts  <- list()
+	  settingsDescription <- ""  # no settings model for threeway in this first version
+	  
+	  for (kk in 1:sl$nslices)
+	  {
+	    slice_name <- paste0(varname, "[slice=", kk, "]")
+	    dep_slice  <- .coerceSliceToOneMode(depvar, sl$getter(kk))
+	    
+	    tmp <- oneModeNet(dep_slice, slice_name)
+	    
+	    allEffects <- rbind(allEffects, tmp$effects)
+	    allStarts[[kk]] <- tmp$starts
+	  }
+	  starts <- allStarts[[1]]
+	  list(effects = allEffects, starts = starts,
+	       settingsDescription = settingsDescription)
+	}
+	
 	##@behaviornet internal getEffects
 	behaviorNet <- function(depvar, varname)
 	{
@@ -1695,6 +1758,14 @@ getEffects <- function(x, nintn = 10, behNintn=4, getDocumentation=FALSE, onePer
 				attr(effects[[i]], 'starts') <- tmp$starts
 				attr(effects[[i]], 'settings') <- ''
 			},
+			threeway =
+			  {
+			    netType <- "threeway"
+			    tmp <- threeWayNet(depvar, varname)
+			    effects[[i]] <- tmp$effects
+			    attr(effects[[i]], 'starts') <- tmp$starts
+			    attr(effects[[i]], 'settings') <- tmp$settingsDescription
+			  },
 			stop('error type'))
 	}
 	settingsList <- lapply(effects, function(ef){attr(ef,'settings')})
