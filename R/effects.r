@@ -103,38 +103,93 @@ getEffects <- function(x, nintn = 10, behNintn=4, getDocumentation=FALSE, onePer
 	
 	## Update for threeway (using onemode and slice)
 	## threeway slice helpers ---------------------------------------------
-	getThreeWaySlices <- function(depvar) {
-	  if (is.array(depvar) && length(dim(depvar)) == 4) {
-	    # depvar[ slice, i, j, time ]
-	    list(
-	      nslices = dim(depvar)[1],
-	      getter  = function(k) depvar[k, , , , drop = FALSE]  # returns [i,j,time]
-	    )
+	## threeway slice helpers ---------------------------------------------
+	.getThreeWaySlices <- function(depvar) {
+	  if (is.array(depvar)) {
+	    d <- dim(depvar)
+	    
+	    if (length(d) == 4) {
+	      ## depvar[ slice, i, j, time ]
+	      nslices <- d[1]
+	      getter <- function(k) {
+	        a <- depvar[k, , , , drop = FALSE]  # 1 x i x j x t
+	        dim(a) <- c(d[2], d[3], d[4])      # i x j x t
+	        a
+	      }
+	    } else if (length(d) == 3) {
+	      ## depvar[ slice, i, j ]  (no time dimension, single wave)
+	      nslices <- d[1]
+	      getter <- function(k) {
+	        a <- depvar[k, , , drop = FALSE]   # 1 x i x j
+	        dim(a) <- c(d[2], d[3], 1)        # i x j x 1
+	        a
+	      }
+	    } else {
+	      stop("threeway depvar must be 3D or 4D array: (slice,i,j[,time]).")
+	    }
+	    
+	    list(nslices = nslices, getter = getter)
+	    
 	  } else if (is.list(depvar)) {
-	    # Each element of the list is itself a 3D array [i,j,time]
-	    list(
-	      nslices = length(depvar),
-	      getter  = function(k) depvar[[k]]
-	    )
+	    ## each element is already a 3D [i,j,time] array or 2D [i,j]
+	    nslices <- length(depvar)
+	    getter <- function(k) {
+	      a <- depvar[[k]]
+	      if (is.matrix(a) && length(dim(a)) == 2) {
+	        dim(a) <- c(nrow(a), ncol(a), 1)
+	      }
+	      a
+	    }
+	    list(nslices = nslices, getter = getter)
+	    
 	  } else {
-	    stop("threeway depvar must be a 4D array (slice,i,j,time) or list of 3D arrays.")
+	    stop("threeway depvar must be an array or list of adjacency matrices.")
 	  }
 	}
 	
-	coerceSliceToOneMode <- function(parent_depvar, slice_array) {
+	.coerceSliceToOneMode <- function(parent_depvar, slice_array) {
 	  dv <- slice_array
-	  at <- attributes(parent_depvar)
-	  for (nm in names(at)) attr(dv, nm) <- at[[nm]]
+	  
+	  ## Ensure dv is 3D: (i, j, time)
+	  if (is.matrix(dv) && length(dim(dv)) == 2) {
+	    dim(dv) <- c(nrow(dv), ncol(dv), 1)
+	  } else if (length(dim(dv)) == 2) {
+	    # generic 2D case
+	    d2 <- dim(dv)
+	    dim(dv) <- c(d2[1], d2[2], 1)
+	  }
+	  
+	  d <- dim(dv)  # now should be length 3
+	  
+	  parent_at <- attributes(parent_depvar)
+	  
+	  ## Copy only non-dimension, non-class, non-symmetry attributes
+	  copy_names <- setdiff(
+	    names(parent_at),
+	    c("dim", "dimnames", "netdims", "class", "names", "symmetric")
+	  )
+	  
+	  for (nm in copy_names) {
+	    attr(dv, nm) <- parent_at[[nm]]
+	  }
+	  
+	  ## One-mode type
 	  attr(dv, "type") <- "oneMode"
 	  
+	  ## nodeSet: keep first if multiple
 	  ns <- attr(parent_depvar, "nodeSet")
-	  if (length(ns) >= 1)
+	  if (length(ns) >= 1) {
 	    attr(dv, "nodeSet") <- if (length(ns) == 1) ns else ns[[1]]
-	  
-	  if (is.null(attr(dv, "symmetric"))) {
-	    first_mat <- dv[ , , 1, drop = TRUE]
-	    attr(dv, "symmetric") <- isTRUE(all(first_mat == t(first_mat)))
 	  }
+	  
+	  ## Infer symmetry from first time slice
+	  first_mat <- dv[ , , 1, drop = TRUE]
+	  is_sym <- isTRUE(all(first_mat == t(first_mat), na.rm = TRUE))
+	  attr(dv, "symmetric") <- is_sym
+	  
+	  ## Correct netdims for 3D network
+	  attr(dv, "netdims") <- c(d[1], d[2], d[3])
+	  
 	  dv
 	}
 	

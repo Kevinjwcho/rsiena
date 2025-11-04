@@ -12,4 +12,5 @@ attr(Y, "netdims")   # 8 8 8 3
 attr(Y, "nodeSet")   # "Actors"
 
 dat = sienaDataCreate(Y)
+print(dat)
 eff <- getEffects(dat)

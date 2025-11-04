@@ -309,28 +309,34 @@ sienaDataCreate<- function(..., nodeSets=NULL, getDocumentation=FALSE)
 	v1 <- 0; v2 <- 0; v3 <- 0; v4 <- 0; v5 <- 0; v6 <- 0
 	for (i in seq(along = dots))
 		switch(class(dots[[i]])[1],
-			   sienaDependent = {
-				   if (attr(dots[[i]],'sparse'))
-				   {
-					   ##  require(Matrix)
-					   netdims <- c(dim(dots[[i]][[1]]), length(dots[[i]]))
-				   }
-				   else
-				   {
-					   netdims <- dim(dots[[i]])
-				   }
-				   if (observations == 0)
-				   {
-					   observations <- netdims[3]
-				   }
-				   else if (observations != netdims[3])
-				   {
-					   stop('differing number of observations')
-				   }
-				   v1 <- v1 + 1
-				   depvars[[v1]] <- dots[[i]]
-				   names(depvars)[v1] <- nm[i]
-			   },
+		       sienaDependent = {
+		         ## detect the variable type safely first
+		         typei <- attr(dots[[i]], "type")
+		         
+		         if (attr(dots[[i]], 'sparse')) {
+		           ## sparse networks handled differently
+		           netdims <- c(dim(dots[[i]][[1]]), length(dots[[i]]))
+		         } else {
+		           netdims <- dim(dots[[i]])
+		         }
+		         
+		         ## figure out how many observations (time points) ---
+		         if (!is.null(typei) && typei == "threeway") {
+		           obs_here <- netdims[length(netdims)]   # last dim = time for 4D threeway
+		         } else {
+		           obs_here <- netdims[3]                 # 3rd dim = time for normal 3D net
+		         }
+		         
+		         if (observations == 0) {
+		           observations <- obs_here
+		         } else if (observations != obs_here) {
+		           stop('differing number of observations')
+		         }
+		         
+		         v1 <- v1 + 1
+		         depvars[[v1]] <- dots[[i]]
+		         names(depvars)[v1] <- nm[i]
+		       },
 			   coCovar = {
 				   v2 <- v2 + 1
 				   cCovars[[v2]] <- dots[[i]]
@@ -731,7 +737,36 @@ sienaDataCreate<- function(..., nodeSets=NULL, getDocumentation=FALSE)
 			attr(depvars[[i]], 'structural') <- FALSE
 			attr(depvars[[i]], 'balmean') <- NA
 			attr(depvars[[i]], 'structmean') <- NA
-	   }
+		}
+		else if (type == "threeway")
+		{
+		  ## NEW: minimal safe initialization for threeway networks
+		  ## so print.siena and others see proper numeric attributes.
+		  
+		  # basic flags
+		  attr(depvars[[i]], 'balmean')    <- NA_real_
+		  attr(depvars[[i]], 'structmean') <- NA_real_
+		  attr(depvars[[i]], 'simMean')    <- NA_real_
+		  attr(depvars[[i]], 'variance')   <- NA_real_
+		  attr(depvars[[i]], 'symmetric')  <- NA
+		  attr(depvars[[i]], 'missing')    <- any(is.na(depvars[[i]]))
+		  attr(depvars[[i]], 'structural') <- any(depvars[[i]] %in% c(10,11), na.rm=TRUE)
+		  
+		  # range2 ignoring structural values 10 / 11
+		  tmp <- depvars[[i]]
+		  tmp[tmp %in% c(10,11)] <- NA
+		  attr(depvars[[i]], "range2") <- range(tmp, na.rm = TRUE)
+		  
+		  # make sure these are NUMERIC vectors so signif() etc. don't fail
+		  attr(depvars[[i]], "ones")             <- rep(NA_real_, observations)
+		  attr(depvars[[i]], "density")          <- rep(NA_real_, observations)
+		  attr(depvars[[i]], "degree")           <- rep(NA_real_, observations)
+		  attr(depvars[[i]], "averageOutDegree") <- NA_real_
+		  attr(depvars[[i]], "averageInDegree")  <- NA_real_
+		  attr(depvars[[i]], "maxObsOutDegree")  <- rep(NA_real_, observations)
+		  attr(depvars[[i]], "missings")         <- rep(NA_real_, observations)
+		  attr(depvars[[i]], "noMissing")        <- rep(NA_integer_, observations)
+		}
 		else
 		{
 			for (j in 1:(observations - 1))
