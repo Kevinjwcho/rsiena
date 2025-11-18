@@ -18,14 +18,26 @@ dat$observations
 print(dat)
 eff <- getEffects(dat)
 print(eff) # density  check the rate initial value 
-# Is the perceived network directed or undirected?
-# Constraints on parameters (are some of them equal)
-# getEffects(dat, homogenous = TRUE) / self-reported case (estimate are different with the perceived)
-# Goodness of fit: outlier(include covariate effects)
+names(eff)          # 어떤 컬럼들이 있는지
+head(as.data.frame(eff))  # 전체 컬럼 보기
 
-# Individual characteristics
-# Dyadic covariates: Distance btw where people live./ perceive more friendship ties for people who live close to you (Dyadic effect (perceiver and sender))
-# Perceiver, sender, receiver effects (Right now I just included sender-receiver effects)
 
-# Next includeEffects(): I think it would be similar to getEffects()
+# Next includeEffects():
+
+eff <- includeEffects(eff, transTrip, name = "Y[slice=1]")
+eff <- includeEffects(eff, transTrip, name = "Y[slice=2]")
+
+
+slice_names <- unique(eff$name)
+
+## we can define the group "parm" to control the overall parameters.
+for (sn in slice_names) {
+  eff <- includeEffects(eff,
+                        density,
+                        name = sn,
+                        parm = 1) 
+}
+View(eff)
+
+
 # sienaAlgorithmCreate() and siena07() would be the most intense work. 
