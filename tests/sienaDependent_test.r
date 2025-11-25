@@ -4,9 +4,12 @@ library(devtools)
 load_all()
 
 set.seed(7)
-X <- array(sample(c(0,1,10,11,NA), 8*8*8*3, replace=TRUE, prob=c(.86,.09,.02,.02,.01)),
+X <- array(sample(c(0,1,10,11,NA), 8*8*8*3, replace=TRUE, prob=c(.66,.29,.02,.02,.01)),
            dim=c(8,8,8,3))
-Y <- sienaDependent(X, type = "threeway") 
+
+# X = array(c(css0, css1, css2), dim = c(20, 20, 20, 3))
+Y <- sienaDependent(X, type = "threeway")
+
 attr(Y, "type")      # "threeway"
 attr(Y, "netdims")   # 8 8 8 3
 attr(Y, "nodeSet")   # "Actors"
@@ -18,15 +21,17 @@ dat$observations
 print(dat)
 eff <- getEffects(dat)
 print(eff) # density  check the rate initial value 
-names(eff)          # 어떤 컬럼들이 있는지
-head(as.data.frame(eff))  # 전체 컬럼 보기
+names(eff)          # what columns we have
+# head(as.data.frame(eff)) # view all effects
 
 
 # Next includeEffects():
 
-eff <- includeEffects(eff, transTrip, name = "Y[slice=1]")
-eff <- includeEffects(eff, transTrip, name = "Y[slice=2]")
+eff <- includeEffects(eff, transTrip, name = "Y[1]")
+eff <- includeEffects(eff, transTrip, name = "Y[2]")
 
+# eff <- includeEffects(eff, transTrip)# Include only in the first slice
+# eff <- includeEffects(eff, transTrip, name = "Y")
 
 slice_names <- unique(eff$name)
 
@@ -41,3 +46,5 @@ View(eff)
 
 
 # sienaAlgorithmCreate() and siena07() would be the most intense work. 
+
+siena_alg <- sienaAlgorithmCreate(projname = 'threeway_test')
