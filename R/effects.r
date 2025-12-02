@@ -775,18 +775,30 @@ getEffects <- function(x, nintn = 10, behNintn=4, getDocumentation=FALSE, onePer
 
 	##@threeWayNet internal getEffects
 	## Reuse oneModeNet on per-slice views of a threeway network
+	## and additionally construct a self-reported one-mode network.
+	## and additionally construct a self-reported one-mode network.
 	threeWayNet <- function(depvar, varname)
 	{
+	  ## 0) Determine global symmetry of the threeway network
+	  parent_sym <- attr(depvar, "symmetric")
+	  if (is.null(parent_sym) || is.na(parent_sym)) {
+	    parent_sym <- .isThreeWaySymmetric(depvar)
+	    attr(depvar, "symmetric") <- parent_sym
+	  }
+	  
 	  sl <- .getThreeWaySlices(depvar)
 	  allEffects <- NULL
 	  allStarts  <- list()
 	  settingsDescription <- ""  # no settings model for threeway in this version
 	  
-	  ## 1) Per-slice one-mode views 
+	  ## 1) Per-slice one-mode views
 	  for (kk in 1:sl$nslices)
 	  {
 	    slice_name <- paste0(varname, "[", kk, "]")
 	    dep_slice  <- .coerceSliceToOneMode(depvar, sl$getter(kk))
+	    
+	    ## Force slice symmetry to follow the parent threeway network
+	    attr(dep_slice, "symmetric") <- parent_sym
 	    
 	    tmp <- oneModeNet(dep_slice, slice_name)
 	    
@@ -794,11 +806,14 @@ getEffects <- function(x, nintn = 10, behNintn=4, getDocumentation=FALSE, onePer
 	    allStarts[[kk]] <- tmp$starts
 	  }
 	  
-	  ## 2) Self-reported one-mode network
+	  ## 2) Self-reported one-mode network (new behavior)
 	  ##    Build a single one-mode, non-symmetric network from the threeway array:
 	  ##    for each subject i, take row i from slice i.
 	  self_dep  <- .buildSelfReportedFromThreeWay(depvar)
 	  self_name <- paste0(varname, "[self]")
+	  
+	  ## Self-reported network is always treated as non-symmetric
+	  attr(self_dep, "symmetric") <- FALSE
 	  
 	  tmpSelf <- oneModeNet(self_dep, self_name)
 	  allEffects <- rbind(allEffects, tmpSelf$effects)
@@ -811,7 +826,6 @@ getEffects <- function(x, nintn = 10, behNintn=4, getDocumentation=FALSE, onePer
 	       starts  = starts,
 	       settingsDescription = settingsDescription)
 	}
-	
 	##@behaviornet internal getEffects
 	behaviorNet <- function(depvar, varname)
 	{
