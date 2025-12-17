@@ -122,9 +122,9 @@ dat_sym <- sienaDataCreate(Y_sym)
 eff_sym <- getEffects(dat_sym)
 print(eff_sym)
 
-## Inspect: for each slice, it should be treated as symmetric
-unique(eff_sym$shortName[eff_sym$type == "rate"])
-head(as.data.frame(eff_sym)[grepl("Y\\[1\\]", eff_sym$name) & eff_sym$type == "rate", ])
+# ## Inspect: for each slice, it should be treated as symmetric
+# unique(eff_sym$shortName[eff_sym$type == "rate"])
+# head(as.data.frame(eff_sym)[grepl("Y\\[1\\]", eff_sym$name) & eff_sym$type == "rate", ])
 
 
 ## Case 2: start from symmetric and break a few dyads in one slice/time ----
@@ -135,11 +135,12 @@ Y_mixed  <- sienaDependent(X_mixed, type = "threeway")
 dat_mixed <- sienaDataCreate(Y_mixed)
 
 eff_mixed <- getEffects(dat_mixed)
+print(eff_mixed)
 
-## Check rate/objective types again
-unique(eff_mixed$shortName[eff_mixed$type == "rate"])
-head(as.data.frame(eff_mixed)[grepl("Y\\[1\\]", eff_mixed$name) & eff_mixed$type == "rate", ])
-head(as.data.frame(eff_mixed)[grepl("Y\\[2\\]", eff_mixed$name) & eff_mixed$type == "rate", ])
+# ## Check rate/objective types again
+# unique(eff_mixed$shortName[eff_mixed$type == "rate"])
+# head(as.data.frame(eff_mixed)[grepl("Y\\[1\\]", eff_mixed$name) & eff_mixed$type == "rate", ])
+# head(as.data.frame(eff_mixed)[grepl("Y\\[2\\]", eff_mixed$name) & eff_mixed$type == "rate", ])
 
 
 ## Case 3: force asymmetry widely for all slices and times -----
@@ -150,8 +151,9 @@ Y_asym   <- sienaDependent(X_asym, type = "threeway")
 dat_asym <- sienaDataCreate(Y_asym)
 
 eff_asym <- getEffects(dat_asym)
+print(eff_asym)
 
-## Check again
-unique(eff_asym$shortName[eff_asym$type == "rate"])
-head(as.data.frame(eff_asym)[grepl("Y\\[1\\]", eff_asym$name) & eff_asym$type == "rate", ])
-head(as.data.frame(eff_asym)[grepl("Y\\[2\\]", eff_asym$name) & eff_asym$type == "rate", ])
+# ## Check again
+# unique(eff_asym$shortName[eff_asym$type == "rate"])
+# head(as.data.frame(eff_asym)[grepl("Y\\[1\\]", eff_asym$name) & eff_asym$type == "rate", ])
+# head(as.data.frame(eff_asym)[grepl("Y\\[2\\]", eff_asym$name) & eff_asym$type == "rate", ])
