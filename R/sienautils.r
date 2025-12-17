@@ -435,6 +435,16 @@ sienaDependent <- function(netarray,
     
     netdims <- dim(netarray)
     
+    ## -------------------------------------------------
+    ## Disallow 3D threeway networks
+    ## -------------------------------------------------
+    if (!missing(type)) {
+      type <- match.arg(type)
+      if (type == "threeway" && length(netdims) != 4) {
+        stop("type='threeway' requires a 4D array: (slice, i, j, time). 3D is not allowed.")
+      }
+    }
+    
     # ★ threeway: if 4D, interpret as threeway (N×N×N×T)
     if (length(netdims) == 4)
     {

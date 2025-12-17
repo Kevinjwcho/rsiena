@@ -6,6 +6,10 @@ load_all()
 set.seed(7)
 X <- array(sample(c(0,1,10,11,NA), 8*8*8*3, replace=TRUE, prob=c(.66,.29,.02,.02,.01)),
            dim=c(8,8,8,3))
+# 
+X <- array(sample(c(0,1,10,11,NA), 8*8*8, replace=TRUE, prob=c(.66,.29,.02,.02,.01)),
+           dim=c(8,8,8))
+
 
 # X = array(c(css0, css1, css2), dim = c(20, 20, 20, 3))
 Y <- sienaDependent(X, type = "threeway")

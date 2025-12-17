@@ -116,48 +116,32 @@ getEffects <- function(x, nintn = 10, behNintn=4, getDocumentation=FALSE, onePer
 	        a
 	      }
 	      
-	    } else if (length(d) == 3) {
-	      ## depvar[ slice, i, j ]  (single time point, no time dimension)
-	      nslices <- d[1]
-	      getter <- function(k) {
-	        a <- depvar[k, , , drop = FALSE]     # 1 x i x j
-	        dim(a) <- c(d[2], d[3], 1L)          # i x j x 1
-	        a
-	      }
-	      
 	    } else {
-	      stop("threeway depvar as array must be 3D or 4D: (slice,i,j[,time]).")
+	      stop("threeway depvar as array must be 4D: (slice,i,j,time).")
 	    }
 	    
 	    return(list(nslices = nslices, getter = getter))
 	  }
 	  
 	  if (is.list(depvar)) {
-	    ## Each element is a slice. It can be:
-	    ##  - a 2D matrix [i, j], or
-	    ##  - a 3D array  [i, j, time].
 	    nslices <- length(depvar)
 	    getter <- function(k) {
 	      a <- depvar[[k]]
-	      if (is.matrix(a) && length(dim(a)) == 2) {
-	        dim(a) <- c(nrow(a), ncol(a), 1L)    # i x j x 1
-	      } else {
-	        d <- dim(a)
-	        if (length(d) == 2) {
-	          dim(a) <- c(d[1], d[2], 1L)
-	        } else if (length(d) == 3) {
-	          ## already i x j x time
-	          # nothing to change
-	        } else {
-	          stop("Elements of threeway list must be 2D or 3D adjacency arrays.")
-	        }
+	      d <- dim(a)
+	      
+	      ## Disallow 2D matrices (single wave)
+	      if (is.null(d) || length(d) != 3) {
+	        stop("Each threeway list element must be a 3D array: (i, j, time). 2D is not allowed.")
+	      }
+	      if (d[3] < 2) {
+	        stop("threeway networks must have at least 2 time points (rate parameters require change).")
 	      }
 	      a
 	    }
 	    return(list(nslices = nslices, getter = getter))
 	  }
 	  
-	  stop("threeway depvar must be an array (3D/4D) or a list of adjacency matrices.")
+	  stop("threeway depvar must be a 4D array (slice,i,j,time) or a list of 3D arrays (i,j,time).")
 	}
 	
 	## Determine whether a three-way dependent variable is symmetric.
@@ -181,49 +165,30 @@ getEffects <- function(x, nintn = 10, behNintn=4, getDocumentation=FALSE, onePer
 	      return(TRUE)
 	    }
 	    
-	    ## 3D: [slice, i, j] (single time point)
-	    if (length(d) == 3) {
-	      nslices <- d[1]; ni <- d[2]; nj <- d[3]
-	      if (ni != nj) return(FALSE)
-	      
-	      for (k in 1:nslices) {
-	        M <- depvar[k, , , drop = TRUE]
-	        if (!isTRUE(all(M == t(M), na.rm = TRUE))) return(FALSE)
-	      }
-	      return(TRUE)
-	    }
-	    
-	    stop("threeway depvar as array must be 3D or 4D: (slice,i,j[,time]).")
+	    stop("threeway depvar must be 4D: (slice,i,j,time). 3D is not allowed.")
 	  }
 	  
 	  if (is.list(depvar)) {
-	    ## Each element is one slice.
 	    for (a in depvar) {
-	      if (is.matrix(a) && length(dim(a)) == 2) {
-	        ## 2D adjacency [i, j]
-	        if (!isTRUE(all(a == t(a), na.rm = TRUE))) return(FALSE)
-	      } else {
-	        d <- dim(a)
-	        if (length(d) == 2) {
-	          if (d[1] != d[2]) return(FALSE)
-	          if (!isTRUE(all(a == t(a), na.rm = TRUE))) return(FALSE)
-	        } else if (length(d) == 3) {
-	          ni <- d[1]; nj <- d[2]; nt <- d[3]
-	          if (ni != nj) return(FALSE)
-	          for (tt in 1:nt) {
-	            M <- a[ , , tt, drop = TRUE]
-	            if (!isTRUE(all(M == t(M), na.rm = TRUE))) return(FALSE)
-	          }
-	        } else {
-	          stop("Elements of threeway list must be 2D or 3D adjacency arrays.")
-	        }
+	      d <- dim(a)
+	      if (is.null(d) || length(d) != 3) {
+	        stop("Elements of threeway list must be 3D adjacency arrays: (i, j, time).")
+	      }
+	      ni <- d[1]; nj <- d[2]; nt <- d[3]
+	      if (ni != nj) return(FALSE)
+	      if (nt < 2) stop("threeway networks must have at least 2 time points; 1 time point is not allowed.")
+	      
+	      for (tt in 1:nt) {
+	        M <- a[ , , tt, drop = TRUE]
+	        if (!isTRUE(all(M == t(M), na.rm = TRUE))) return(FALSE)
 	      }
 	    }
 	    return(TRUE)
 	  }
 	  
-	  stop("threeway depvar must be an array (3D/4D) or a list of adjacency matrices.")
+	  stop("threeway depvar must be a 4D array or a list of 3D arrays.")
 	}
+
 	
 	.coerceSliceToOneMode <- function(parent_depvar, slice_array) {
 	  dv <- slice_array
@@ -280,45 +245,27 @@ getEffects <- function(x, nintn = 10, behNintn=4, getDocumentation=FALSE, onePer
 	  }
 	  d <- dim(depvar)
 	  
-	  if (length(d) == 4) {
-	    ## depvar[subject, i, j, time]
-	    n  <- d[2]
-	    TT <- d[4]
-	    if (n != d[3]) {
-	      stop("Sender and receiver dimensions must match to build a one-mode self-reported network.")
-	    }
-	    selfArr <- array(NA, dim = c(n, n, TT))
-	    
-	    ## For each subject i, take row i from slice i and store as ego i
-	    for (i in 1:n) {
-	      ## subject = i, row = i
-	      ## selfArr[i, j, t] = depvar[i, i, j, t]
-	      selfArr[i, , ] <- depvar[i, i, , ]
-	    }
-	    
-	  } else if (length(d) == 3) {
-	    ## depvar[subject, i, j] (single wave)
-	    n <- d[2]
-	    if (n != d[3]) {
-	      stop("Sender and receiver dimensions must match to build a one-mode self-reported network.")
-	    }
-	    selfArr <- array(NA, dim = c(n, n, 1))
-	    
-	    for (i in 1:n) {
-	      ## subject = i, row = i, single time slice
-	      selfArr[i, , 1] <- depvar[i, i, ]
-	    }
-	    
-	  } else {
-	    stop("threeway depvar must be a 3D or 4D array: (subject, i, j[, time]).")
+	  if (length(d) != 4) {
+	    stop("Self-reported requires a 4D array: (subject, i, j, time). 3D is not allowed.")
 	  }
 	  
-	  ## Turn selfArr into a proper one-mode dependent variable
+	  ## depvar[subject, i, j, time]
+	  n  <- d[2]
+	  TT <- d[4]
+	  if (TT < 2) {
+	    stop("Self-reported threeway networks must have at least 2 time points.")
+	  }
+	  if (n != d[3]) {
+	    stop("Sender and receiver dimensions must match to build a one-mode self-reported network.")
+	  }
+	  
+	  selfArr <- array(NA, dim = c(n, n, TT))
+	  for (i in 1:n) {
+	    selfArr[i, , ] <- depvar[i, i, , ]
+	  }
+	  
 	  dv <- .coerceSliceToOneMode(depvar, selfArr)
-	  
-	  ## Force self-reported network to be treated as non-symmetric
 	  attr(dv, "symmetric") <- FALSE
-	  
 	  dv
 	}
 	
