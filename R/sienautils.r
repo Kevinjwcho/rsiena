@@ -419,6 +419,8 @@ sienaDependent <- function(netarray,
                            allowOnly = TRUE,
                            imputationValues = NULL)
 {
+
+  
   # Disallow data.frame as first argument: must be array or list of sparse matrices
   if (inherits(netarray, 'data.frame'))
   {
@@ -678,6 +680,8 @@ sienaDependent <- function(netarray,
   attr(obj, "nodeSet")   <- nodeSet
   attr(obj, "netdims")   <- netdims
   attr(obj, "allowOnly") <- allowOnly
+
+
   if (!is.null(imputationValues))
   {
     attr(obj, "imputationValues") <- imputationValues

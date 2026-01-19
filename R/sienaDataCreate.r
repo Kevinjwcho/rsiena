@@ -740,24 +740,195 @@ sienaDataCreate<- function(..., nodeSets=NULL, getDocumentation=FALSE)
 		}
 		else if (type == "threeway")
 		{
-		  ## NEW: minimal safe initialization for threeway networks
-		  ## so print.siena and others see proper numeric attributes.
+
+		  ## Dense threeway only (sparse threeway not supported here)
+		  if (sparse) {
+		    stop("threeway + sparse not implemented in sienaDataCreate")
+		  }
 		  
-		  # basic flags
-		  attr(depvars[[i]], 'balmean')    <- NA_real_
-		  attr(depvars[[i]], 'structmean') <- NA_real_
-		  attr(depvars[[i]], 'simMean')    <- NA_real_
-		  attr(depvars[[i]], 'variance')   <- NA_real_
-		  attr(depvars[[i]], 'symmetric')  <- NA
-		  attr(depvars[[i]], 'missing')    <- any(is.na(depvars[[i]]))
-		  attr(depvars[[i]], 'structural') <- any(depvars[[i]] %in% c(10,11), na.rm=TRUE)
+		  .isThreeWaySymmetric <- function(depvar) {
+		    
+		    ## Helper: check symmetry of a single n x n matrix with NA/structural handling
+		    .is_sym_mat <- function(M) {
+		      if (!is.matrix(M)) M <- as.matrix(M)
+		      if (nrow(M) != ncol(M)) return(FALSE)
+		      
+		      ## treat structural codes as missing
+		      M[M %in% c(10, 11)] <- NA
+		      
+		      ## ignore diagonal
+		      diag(M) <- NA
+		      
+		      ## symmetry check ignoring NA
+		      isTRUE(all(M == t(M), na.rm = TRUE))
+		    }
+		    
+		    ## Case 1: depvar is a 4D array (slice, i, j, time)
+		    if (is.array(depvar)) {
+		      d <- dim(depvar)
+		      
+		      if (length(d) != 4) {
+		        stop("threeway depvar as array must be 4D: (slice, i, j, time).")
+		      }
+		      
+		      nslices <- d[1]
+		      ni <- d[2]
+		      nj <- d[3]
+		      nt <- d[4]
+		      
+		      if (ni != nj) return(FALSE)
+		      if (nt < 2) {
+		        stop("threeway networks must have at least 2 time points.")
+		      }
+		      
+		      for (k in 1:nslices) {
+		        for (tt in 1:nt) {
+		          M <- depvar[k, , , tt, drop = TRUE]
+		          if (!.is_sym_mat(M)) return(FALSE)
+		        }
+		      }
+		      return(TRUE)
+		    }
+		    
+		    ## Case 2: depvar is a list of 3D arrays (i, j, time) per slice
+		    if (is.list(depvar)) {
+		      if (length(depvar) < 1) stop("threeway depvar list is empty.")
+		      
+		      for (a in depvar) {
+		        da <- dim(a)
+		        if (is.null(da) || length(da) != 3) {
+		          stop("Each element of a threeway list must be a 3D array: (i, j, time).")
+		        }
+		        
+		        ni <- da[1]
+		        nj <- da[2]
+		        nt <- da[3]
+		        
+		        if (ni != nj) return(FALSE)
+		        if (nt < 2) {
+		          stop("threeway networks must have at least 2 time points.")
+		        }
+		        
+		        for (tt in 1:nt) {
+		          M <- a[ , , tt, drop = TRUE]
+		          if (!.is_sym_mat(M)) return(FALSE)
+		        }
+		      }
+		      return(TRUE)
+		    }
+		    
+		    stop("threeway depvar must be a 4D array or a list of 3D arrays.")
+		  }
 		  
-		  # range2 ignoring structural values 10 / 11
+		  ## netdims = c(K, n, n, T)
+		  netdims <- attr(depvars[[i]], "netdims")
+		  K  <- netdims[1]   # number of perception slices
+		  n1 <- netdims[2]
+		  n2 <- netdims[3]
+		  TT <- netdims[4]   # number of observations (time points)
+		  
+
+		  
+		  dist_parent <- numeric(observations - 1)
+		  dist_slices <- vector("list", K)
+		  for (k in 1:K) dist_slices[[k]] <- numeric(observations - 1)
+		  ## Self slice distance (length = observations - 1)
+		  self_dist <- numeric(observations - 1)
+		  for (j in 1:(observations - 1)) {
+		    
+		    ## Arrays at time j and j+1: K x n x n
+		    a1 <- myarray[, , , j]
+		    a2 <- myarray[, , , j + 1]
+		    
+		    ## Bookkeeping: missingness across all slices
+		    attr(depvars[[i]], "noMissingEither")[j] <-
+		      sum(is.na(a1) | is.na(a2))
+		    attr(depvars[[i]], "nonMissingEither")[j] <-
+		      sum(!(is.na(a1) | is.na(a2)))
+		    
+		    ## Structural values (10, 11) are treated as missing
+		    a1[a1 %in% c(10, 11)] <- NA
+		    a2[a2 %in% c(10, 11)] <- NA
+		    
+		    ## Remove self-ties for each perception slice
+		    for (k in 1:K) {
+		      diag(a1[k, , ]) <- NA
+		      diag(a2[k, , ]) <- NA
+		    }
+		    
+		    ## Slice-wise distances and parent aggregation
+		    for (k in 1:K) {
+		      diffk <- a2[k, , ] - a1[k, , ]
+		      dist_slices[[k]][j] <- sum(diffk != 0, na.rm = TRUE)
+		    }
+		    
+		    ## Parent distance = sum of slice-specific distances
+		    dist_parent[j] <- sum(vapply(dist_slices, function(v) v[j], numeric(1)),
+		                          na.rm = TRUE)
+		    ## ---- Self slice distance for this period ----
+		    ## Construct a one-mode self-reported matrix:
+		    ## self[i, j] = depvar[slice = i, sender = i, receiver = j]
+		    self1 <- matrix(NA_real_, n1, n2)
+		    self2 <- matrix(NA_real_, n1, n2)
+		    for (ii in 1:n1) {
+		      self1[ii, ] <- myarray[ii, ii, , j]
+		      self2[ii, ] <- myarray[ii, ii, , j + 1]
+		    }
+		    ## Treat structural codes as missing and ignore diagonal
+		    self1[self1 %in% c(10, 11)] <- NA
+		    self2[self2 %in% c(10, 11)] <- NA
+		    diag(self1) <- NA
+		    diag(self2) <- NA
+		    
+		    self_dist[j] <- sum((self2 - self1) != 0, na.rm = TRUE)
+		  }
+		  
+		  attr(depvars[[i]], "distance") <- dist_parent
+		  attr(depvars[[i]], "distanceSlices") <- dist_slices
+		  ## Store self slice distance separately for later reuse in effects.r
+		  attr(depvars[[i]], "distanceSelf") <- self_dist
+		  
+
+		  
+		  attr(depvars[[i]], "allUpOnly")   <- FALSE
+		  attr(depvars[[i]], "allDownOnly") <- FALSE
+		  
+
+		  
+		  sym_perc <- .isThreeWaySymmetric(depvars[[i]])
+		  sym_self <- FALSE
+		  attr(depvars[[i]], "symmetric") <- c(isTRUE(sym_perc), FALSE)
+		  
+		  ## Optional: store slice-level symmetry diagnostics
+		  ## (useful for debugging which perception slice violates symmetry)
+		  sym_slices <- rep(TRUE, K)
+		  for (k in 1:K) {
+		    for (t in 1:observations) {
+		      M <- myarray[k, , , t]
+		      M[M %in% c(10, 11)] <- NA
+		      diag(M) <- NA
+		      if (!isTRUE(all(M == t(M), na.rm = TRUE))) {
+		        sym_slices[k] <- FALSE
+		        break
+		      }
+		    }
+		  }
+		  attr(depvars[[i]], "symmetricSlices") <- c(sym_slices, FALSE)  # last entry = self
+		  
+	
+		  
+		  attr(depvars[[i]], "balmean")    <- NA_real_
+		  attr(depvars[[i]], "structmean") <- NA_real_
+		  attr(depvars[[i]], "simMean")    <- NA_real_
+		  attr(depvars[[i]], "variance")   <- NA_real_
+		  
+		  attr(depvars[[i]], "missing")    <- any(is.na(depvars[[i]]))
+		  attr(depvars[[i]], "structural") <- any(depvars[[i]] %in% c(10, 11), na.rm = TRUE)
+		  
 		  tmp <- depvars[[i]]
-		  tmp[tmp %in% c(10,11)] <- NA
+		  tmp[tmp %in% c(10, 11)] <- NA
 		  attr(depvars[[i]], "range2") <- range(tmp, na.rm = TRUE)
 		  
-		  # make sure these are NUMERIC vectors so signif() etc. don't fail
 		  attr(depvars[[i]], "ones")             <- rep(NA_real_, observations)
 		  attr(depvars[[i]], "density")          <- rep(NA_real_, observations)
 		  attr(depvars[[i]], "degree")           <- rep(NA_real_, observations)

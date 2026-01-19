@@ -118,7 +118,7 @@ X_sym <- make_all_symmetric(X)
 
 Y_sym  <- sienaDependent(X_sym, type = "threeway")
 dat_sym <- sienaDataCreate(Y_sym)
-
+attr(dat_sym$depvars[[1]], "symmetric")  # check length 2
 eff_sym <- getEffects(dat_sym)
 print(eff_sym)
 

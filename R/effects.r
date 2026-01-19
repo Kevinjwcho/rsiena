@@ -190,53 +190,81 @@ getEffects <- function(x, nintn = 10, behNintn=4, getDocumentation=FALSE, onePer
 	}
 
 	
+	# .coerceSliceToOneMode <- function(parent_depvar, slice_array) {
+	#   dv <- slice_array
+	#   
+	#   ## Ensure dv has 3 dimensions: (i, j, time)
+	#   if (is.matrix(dv) && length(dim(dv)) == 2) {
+	#     dim(dv) <- c(nrow(dv), ncol(dv), 1L)
+	#   } else if (length(dim(dv)) == 2) {
+	#     d2 <- dim(dv)
+	#     dim(dv) <- c(d2[1], d2[2], 1L)
+	#   }
+	#   d <- dim(dv)  # (i, j, time)
+	#   
+	#   parent_at <- attributes(parent_depvar)
+	#   
+	#   ## Copy all attributes except purely structural ones.
+	#   copy_names <- setdiff(
+	#     names(parent_at),
+	#     c("dim", "dimnames", "netdims", "class", "names", "symmetric")
+	#   )
+	#   for (nm in copy_names) {
+	#     attr(dv, nm) <- parent_at[[nm]]
+	#   }
+	#   
+	#   ## Symmetry: copy global flag from parent three-way object.
+	#   ## Do NOT re-evaluate symmetry here.
+	#   if (!is.null(parent_at$symmetric)) {
+	#     attr(dv, "symmetric") <- as.logical(parent_at$symmetric)[1]
+	#   } else {
+	#     ## Fallback: check only the first time slice
+	#     first_mat <- dv[ , , 1, drop = TRUE]
+	#     is_sym <- isTRUE(all(first_mat == t(first_mat), na.rm = TRUE))
+	#     attr(dv, "symmetric") <- is_sym
+	#   }
+	#   
+	#   ## One-mode type for this slice
+	#   attr(dv, "type") <- "oneMode"
+	#   
+	#   ## Node set: keep the first if multiple are present
+	#   ns <- attr(parent_depvar, "nodeSet")
+	#   if (!is.null(ns)) {
+	#     attr(dv, "nodeSet") <- if (length(ns) == 1) ns else ns[[1]]
+	#   }
+	#   
+	#   ## netdims for this 3D one-mode network
+	#   attr(dv, "netdims") <- c(d[1], d[2], d[3])
+	#   
+	#   dv
+	# }
+	
 	.coerceSliceToOneMode <- function(parent_depvar, slice_array) {
 	  dv <- slice_array
 	  
 	  ## Ensure dv has 3 dimensions: (i, j, time)
-	  if (is.matrix(dv) && length(dim(dv)) == 2) {
-	    dim(dv) <- c(nrow(dv), ncol(dv), 1L)
-	  } else if (length(dim(dv)) == 2) {
+	  if (is.matrix(dv) || length(dim(dv)) == 2) {
 	    d2 <- dim(dv)
 	    dim(dv) <- c(d2[1], d2[2], 1L)
 	  }
 	  d <- dim(dv)  # (i, j, time)
 	  
-	  parent_at <- attributes(parent_depvar)
+	  ## Build a "real" oneMode sienaDependent (this sets distance, etc. correctly)
+	  dv1 <- sienaDependent(dv, type = "oneMode")
 	  
-	  ## Copy all attributes except purely structural ones.
-	  copy_names <- setdiff(
-	    names(parent_at),
-	    c("dim", "dimnames", "netdims", "class", "names", "symmetric")
-	  )
-	  for (nm in copy_names) {
-	    attr(dv, nm) <- parent_at[[nm]]
-	  }
-	  
-	  ## Symmetry: copy global flag from parent three-way object.
-	  ## Do NOT re-evaluate symmetry here.
-	  if (!is.null(parent_at$symmetric)) {
-	    attr(dv, "symmetric") <- as.logical(parent_at$symmetric)[1]
-	  } else {
-	    ## Fallback: check only the first time slice
-	    first_mat <- dv[ , , 1, drop = TRUE]
-	    is_sym <- isTRUE(all(first_mat == t(first_mat), na.rm = TRUE))
-	    attr(dv, "symmetric") <- is_sym
-	  }
-	  
-	  ## One-mode type for this slice
-	  attr(dv, "type") <- "oneMode"
+	  ## Keep parent-specific attributes that are not guaranteed to be set by sienaDependent
+	  attr(dv1, "allowOnly") <- attr(parent_depvar, "allowOnly")
 	  
 	  ## Node set: keep the first if multiple are present
 	  ns <- attr(parent_depvar, "nodeSet")
 	  if (!is.null(ns)) {
-	    attr(dv, "nodeSet") <- if (length(ns) == 1) ns else ns[[1]]
+	    attr(dv1, "nodeSet") <- if (length(ns) == 1) ns else ns[[1]]
 	  }
 	  
-	  ## netdims for this 3D one-mode network
-	  attr(dv, "netdims") <- c(d[1], d[2], d[3])
+	  ## netdims for this 3D one-mode network (explicit)
+	  attr(dv1, "netdims") <- c(d[1], d[2], d[3])
 	  
-	  dv
+	  dv1
 	}
 	
 	.buildSelfReportedFromThreeWay <- function(depvar) {
@@ -726,43 +754,89 @@ getEffects <- function(x, nintn = 10, behNintn=4, getDocumentation=FALSE, onePer
 	## and additionally construct a self-reported one-mode network.
 	threeWayNet <- function(depvar, varname)
 	{
-	  ## 0) Determine global symmetry of the threeway network
-	  parent_sym <- attr(depvar, "symmetric")
-	  if (is.null(parent_sym) || is.na(parent_sym)) {
-	    parent_sym <- .isThreeWaySymmetric(depvar)
-	    attr(depvar, "symmetric") <- parent_sym
-	  }
 	  
+	  ## 0) Standardize symmetric to length 2: (perception, self)
+	  sym <- attr(depvar, "symmetric")
+	  if (is.null(sym) || !is.logical(sym) || length(sym) != 2 || any(is.na(sym))) {
+	    stop("threeway depvar must have attr('symmetric') logical length 2: c(perception, self).")
+	  }
+	  sym_perc <- isTRUE(sym[[1]])
+	  sym_self <- isTRUE(sym[[2]])
+	  # 
 	  sl <- .getThreeWaySlices(depvar)
 	  allEffects <- NULL
 	  allStarts  <- list()
-	  settingsDescription <- ""  # no settings model for threeway in this version
+	  settingsDescription <- ""
 	  
 	  ## 1) Per-slice one-mode views
 	  for (kk in 1:sl$nslices)
 	  {
-	    slice_name <- paste0(varname, "[", kk, "]")
+	    # slice_name <- paste0(varname, "[", kk, "]")
 	    dep_slice  <- .coerceSliceToOneMode(depvar, sl$getter(kk))
+	    # 
+	    # ## Force slice symmetry to follow the parent threeway network
+	    attr(dep_slice, "symmetric") <- sym_perc
 	    
-	    ## Force slice symmetry to follow the parent threeway network
-	    attr(dep_slice, "symmetric") <- parent_sym
+	    ## Ensure dep_slice has correct time dimension in netdims
+	    nd_parent <- attr(depvar, "netdims")   # expected c(K, n, n, T)
+	    nd_slice  <- attr(dep_slice, "netdims")# expected c(n, n, T)
+	    if (!is.null(nd_parent) && length(nd_parent) == 4 &&
+	        !is.null(nd_slice)  && length(nd_slice)  == 3) {
+	      nd_slice[3] <- nd_parent[4]
+	      attr(dep_slice, "netdims") <- nd_slice
+	    }
 	    
-	    tmp <- oneModeNet(dep_slice, slice_name)
+	    ## Attach per-slice distance vector if available
+	    ds <- attr(depvar, "distanceSlices")
+	    if (!is.null(ds) && is.list(ds) && length(ds) >= kk) {
+	      attr(dep_slice, "distance") <- ds[[kk]]
+	    }
+	    
+	    ## Make sure these exist (avoid NULL in logical tests downstream)
+	    if (is.null(attr(dep_slice, "allUpOnly")))   attr(dep_slice, "allUpOnly")   <- FALSE
+	    if (is.null(attr(dep_slice, "allDownOnly"))) attr(dep_slice, "allDownOnly") <- FALSE
+	    
+	    slice_tag <- paste0("[", kk, "]")
+	    
+	    
+	    tmp <- oneModeNet(dep_slice, varname)
+	    
+	    ii <- tmp$effects$name == varname
+	    tmp$effects$effectName[ii] <- paste0(tmp$effects$effectName[ii], slice_tag)
+	    tmp$effects$name[ii] <- paste0(varname, slice_tag)
 	    
 	    allEffects <- rbind(allEffects, tmp$effects)
+	    
 	    allStarts[[kk]] <- tmp$starts
+	    
 	  }
 	  
 	  ## 2) Self-reported one-mode network (new behavior)
 	  ##    Build a single one-mode, non-symmetric network from the threeway array:
 	  ##    for each subject i, take row i from slice i.
 	  self_dep  <- .buildSelfReportedFromThreeWay(depvar)
-	  self_name <- paste0(varname, "[self]")
+	  # self_name <- paste0(varname, "[self]")
 	  
 	  ## Self-reported network is always treated as non-symmetric
-	  attr(self_dep, "symmetric") <- FALSE
+	  attr(self_dep, "symmetric") <- sym_self
 	  
-	  tmpSelf <- oneModeNet(self_dep, self_name)
+	  ## Attach self slice distance computed in sienaDataCreate
+	  dself <- attr(depvar, "distanceSelf")
+	  if (!is.null(dself) && length(dself) > 0) {
+	    attr(self_dep, "distance") <- dself
+	  }
+	  
+	  if (is.null(attr(self_dep, "allUpOnly")))   attr(self_dep, "allUpOnly")   <- FALSE
+	  if (is.null(attr(self_dep, "allDownOnly"))) attr(self_dep, "allDownOnly") <- FALSE
+	  
+	  self_tag <- "[self]"
+	  
+	  tmpSelf <- oneModeNet(self_dep, varname)
+	  
+	  ii <- tmpSelf$effects$name == varname
+	  tmpSelf$effects$effectName[ii] <- paste0(tmpSelf$effects$effectName[ii], self_tag)
+	  tmpSelf$effects$name[ii] <- paste0(varname, self_tag)
+	  
 	  allEffects <- rbind(allEffects, tmpSelf$effects)
 	  ## If needed, you could store tmpSelf$starts as well.
 	  

@@ -46,11 +46,38 @@ includeEffects <- function(myeff, ..., include=TRUE, name=myeff$name[1],
 	{
 		stop("Effect cycle4ND now is called cycle4. Use the new name please.")
 	}
-	use <- myeff$shortName %in% effectNames &
-	myeff$type==type &
-	myeff$name==name &
-	myeff$interaction1 == interaction1 &
-	myeff$interaction2 == interaction2
+  # --- threeway slice support: name like "Y[1]" or "Y[self]" ---
+  sliceTag <- ""
+  baseName <- name
+  
+  m <- regexec("^(.*)\\[(.*)\\]$", name)
+  r <- regmatches(name, m)[[1]]
+  if (length(r) > 0) {
+    baseName <- r[2]
+    sliceTag <- paste0("[", r[3], "]")
+  }
+  
+  ## Build dependent-variable name candidates using existing names in the effects object.
+  ## If user passed base name (e.g., "Y"), apply to all expanded slices (e.g., "Y[1]"..."Y[self]").
+  nameCandidates <- unique(c(name, baseName))
+  
+  if (sliceTag == "") {
+    prefix <- paste0(baseName, "[")
+    sliceNames <- unique(myeff$name[startsWith(myeff$name, prefix)])
+    nameCandidates <- unique(c(nameCandidates, sliceNames))
+  }
+  
+  use <- myeff$shortName %in% effectNames &
+    myeff$type == type &
+    myeff$name %in% nameCandidates &
+    myeff$interaction1 == interaction1 &
+    myeff$interaction2 == interaction2
+  
+  ## If user specified a slice tag explicitly, additionally filter by effectName suffix.
+  if (sliceTag != "") {
+    use <- use & endsWith(myeff$effectName, sliceTag)
+  }
+  
 	myeff[use, "include"] <- include
 	myeff[use, "test"] <- test
 	myeff[use, "fix"] <- fix
@@ -65,7 +92,9 @@ includeEffects <- function(myeff, ..., include=TRUE, name=myeff$name[1],
 		cat(paste("and with interaction1 = <",interaction1,">, ", sep=""))
 		cat(paste("interaction2 = <",interaction2,">, ", sep=""))
 		cat(paste("and type = <",type,">, \n", sep=""))
-		cat(paste("for dependent variable",name,".\n"))
+		# cat(paste("for dependent variable",name,".\n"))
+		cat(paste("for dependent variable", baseName, ".\n"))
+		if (sliceTag != "") cat(paste("Slice tag:", sliceTag, "\n"))
 		cat("See effectsDocumentation() for this effects object.\n")
 	}
 	else
