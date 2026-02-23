@@ -852,8 +852,8 @@ sienaDataCreate<- function(..., nodeSets=NULL, getDocumentation=FALSE)
 		    
 		    ## Remove self-ties for each perception slice
 		    for (k in 1:K) {
-		      diag(a1[k, , ]) <- NA
-		      diag(a2[k, , ]) <- NA
+		      diag(a1[k, , ]) <- 0
+		      diag(a2[k, , ]) <- 0
 		    }
 		    
 		    ## Slice-wise distances and parent aggregation
@@ -877,8 +877,8 @@ sienaDataCreate<- function(..., nodeSets=NULL, getDocumentation=FALSE)
 		    ## Treat structural codes as missing and ignore diagonal
 		    self1[self1 %in% c(10, 11)] <- NA
 		    self2[self2 %in% c(10, 11)] <- NA
-		    diag(self1) <- NA
-		    diag(self2) <- NA
+		    diag(self1) <- 0
+		    diag(self2) <- 0
 		    
 		    self_dist[j] <- sum((self2 - self1) != 0, na.rm = TRUE)
 		  }
