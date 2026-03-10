@@ -290,8 +290,16 @@ doIterations<- function(z, x, subphase,...)
 				zz <- x$FRAN(zsmall, xsmall)
 			}
 			fra <- colSums(zz$fra) - z$targets
-			
-			
+
+			## ★ shareParameters: aggregate fra across perception slices.
+			## Canonical slot = Σᵢ (sim_ir - target_ir); duplicates set to 0.
+			if (isTRUE(z$threewayShareParams)) {
+				for (grp in z$threewayShareGroups) {
+					fra[grp[1]] <- sum(fra[grp])
+					fra[grp[-1]] <- 0
+				}
+			}
+
 #Report(paste("fra (1): ", "\n"), cf)
 #PrtOutMat(as.matrix(fra), cf)
 
@@ -331,6 +339,13 @@ doIterations<- function(z, x, subphase,...)
 			}
 			dim(fra) <- c(z$pp, z$int)
 			fra <- rowMeans(fra)
+			## ★ shareParameters: aggregate fra (parallel case)
+			if (isTRUE(z$threewayShareParams)) {
+				for (grp in z$threewayShareGroups) {
+					fra[grp[1]] <- sum(fra[grp])
+					fra[grp[-1]] <- 0
+				}
+			}
 			zz$OK <- sapply(zz, function(x) x$OK)
 			if (!all(zz$OK))
 			{
@@ -511,6 +526,14 @@ doIterations<- function(z, x, subphase,...)
 				zsmall$theta <- zsmall$theta - fchange
 		}
 		z$theta <- zsmall$theta
+		## ★ shareParameters: propagate canonical objective theta to all duplicate
+		## slice copies so that C always sees a consistent (shared) parameter vector.
+		if (isTRUE(z$threewayShareParams)) {
+			for (grp in z$threewayShareGroups) {
+				z$theta[grp[-1]] <- z$theta[grp[1]]
+			}
+			zsmall$theta <- z$theta
+		}
 		z$thav <- z$thav + zsmall$theta
 		z$thavn <- z$thavn + 1
  

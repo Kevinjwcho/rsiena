@@ -787,6 +787,14 @@ doPhase1or3Iterations <- function(phase, z, x, zsmall, xsmall, nits, nits6=0,
 		{
 			fra <- colSums(zz$fra)
 			fra <- fra - z$targets
+			## ★ shareParameters: aggregate fra across slices (sequential).
+			## Each canonical slot accumulates Σᵢ (sim_ir - target_ir).
+			if (isTRUE(z$threewayShareParams)) {
+				for (grp in z$threewayShareGroups) {
+					fra[grp[1]] <- sum(fra[grp])
+					fra[grp[-1]] <- 0
+				}
+			}
 			if (z$FinDiff.method)
 			{
 				fra2 <- zz$fra
@@ -794,7 +802,17 @@ doPhase1or3Iterations <- function(phase, z, x, zsmall, xsmall, nits, nits6=0,
 			z$sf[z$nit, ] <- fra
 			if (z$sf2.byIteration)
 			{
-				z$sf2[z$nit, , ] <- zz$fra
+				if (isTRUE(z$threewayShareParams)) {
+					## Aggregate sf2: canonical = Σᵢ sf2_i, duplicates = 0.
+					## zz$fra is (nPeriods × pp).
+					z$sf2[z$nit, , ] <- zz$fra
+					for (grp in z$threewayShareGroups) {
+						z$sf2[z$nit, , grp[1]] <- rowSums(zz$fra[, grp, drop=FALSE])
+						z$sf2[z$nit, , grp[-1]] <- 0
+					}
+				} else {
+					z$sf2[z$nit, , ] <- zz$fra
+				}
 			}
 			else
 			{
@@ -816,10 +834,26 @@ doPhase1or3Iterations <- function(phase, z, x, zsmall, xsmall, nits, nits6=0,
 			{
 				fra <- colSums(zz[[i]]$fra)
 				fra <- fra - z$targets
+				## ★ shareParameters: aggregate fra across slices (parallel).
+				if (isTRUE(z$threewayShareParams)) {
+					for (grp in z$threewayShareGroups) {
+						fra[grp[1]] <- sum(fra[grp])
+						fra[grp[-1]] <- 0
+					}
+				}
 				z$sf[z$nit + (i - 1), ] <- fra
 				if (z$sf2.byIteration)
 				{
-					z$sf2[z$nit + (i - 1), , ] <- zz[[i]]$fra
+					if (isTRUE(z$threewayShareParams)) {
+						z$sf2[z$nit + (i - 1), , ] <- zz[[i]]$fra
+						for (grp in z$threewayShareGroups) {
+							z$sf2[z$nit + (i - 1), , grp[1]] <-
+								rowSums(zz[[i]]$fra[, grp, drop=FALSE])
+							z$sf2[z$nit + (i - 1), , grp[-1]] <- 0
+						}
+					} else {
+						z$sf2[z$nit + (i - 1), , ] <- zz[[i]]$fra
+					}
 				}
 				else
 				{
@@ -872,6 +906,15 @@ doPhase1or3Iterations <- function(phase, z, x, zsmall, xsmall, nits, nits6=0,
 					if (z$sf2.byIteration)
 					{
 						z$ssc[z$nit , ,] <- zz$sc
+						## ★ shareParameters: aggregate ssc scores (sequential).
+						## Canonical slot = Σᵢ score_i; duplicates = 0.
+						if (isTRUE(z$threewayShareParams)) {
+							for (grp in z$threewayShareGroups) {
+								z$ssc[z$nit, , grp[1]] <-
+									rowSums(z$ssc[z$nit, , grp, drop=FALSE])
+								z$ssc[z$nit, , grp[-1]] <- 0
+							}
+						}
 					}
 					else
 					{
@@ -894,6 +937,14 @@ doPhase1or3Iterations <- function(phase, z, x, zsmall, xsmall, nits, nits6=0,
 						if (z$sf2.byIteration)
 						{
 							z$ssc[z$nit + (i - 1), , ] <- zz[[i]]$sc
+							## ★ shareParameters: aggregate ssc (parallel case).
+							if (isTRUE(z$threewayShareParams)) {
+								for (grp in z$threewayShareGroups) {
+									z$ssc[z$nit + (i - 1), , grp[1]] <-
+										rowSums(z$ssc[z$nit + (i - 1), , grp, drop=FALSE])
+									z$ssc[z$nit + (i - 1), , grp[-1]] <- 0
+								}
+							}
 						}
 						else
 						{

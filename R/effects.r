@@ -839,10 +839,43 @@ getEffects <- function(x, nintn = 10, behNintn=4, getDocumentation=FALSE, onePer
 	  
 	  allEffects <- rbind(allEffects, tmpSelf$effects)
 	  ## If needed, you could store tmpSelf$starts as well.
-	  
+
+	  ## ★ shareParameters: mark duplicate objective effects so print() hides them.
+	  ## Canonical copy (Y[1]) gets "(shared)" suffix in effectName and name="Y".
+	  ## Duplicates (Y[2]..Y[K]) are marked sharedDup=TRUE — hidden from print
+	  ## but kept in the table so C++ can compute per-slice statistics.
+	  ## Y[self] is intentionally excluded: its parameters are estimated separately.
+	  allEffects$sharedDup <- FALSE
+	  if (isTRUE(attr(depvar, "shareParameters"))) {
+	    ## Only share objective effects from numeric perception slices: Y[1], Y[2], ...
+	    ## Y[self] is estimated separately and is NOT included in the share group.
+	    is_perc_obj <- !allEffects$basicRate &
+	                   grepl("\\[[0-9]+\\]$", allEffects$name)
+	    obj_sns <- unique(allEffects$shortName[is_perc_obj])
+	    for (sn in obj_sns) {
+	      idx <- which(allEffects$shortName == sn & is_perc_obj)
+	      if (length(idx) >= 2) {
+	        ## canonical (Y[1]): keep name="Y[1]" (required for network matching).
+	        ## Strip the slice index "[1]" from effectName so the display reads
+	        ## e.g. "outdegree (density) (shared)" instead of "outdegree (density)[1] (shared)".
+	        clean_effectName <- gsub("\\s*\\[1\\]", "", allEffects$effectName[idx[1]])
+	        allEffects$effectName[idx[1]] <- paste0(clean_effectName, " (shared)")
+	        ## initialValue: mean across all K perception slices.
+	        ## Each slice has its own data-driven starting value (e.g. outdegree
+	        ## initialValue = observed density per slice, which varies), so the
+	        ## mean is the natural unbiased starting point for the shared β.
+	        shared_init <- mean(allEffects$initialValue[idx])
+	        allEffects$initialValue[idx] <- shared_init   ## all slices start at same θ
+	        ## duplicates (Y[2]..Y[K]): hidden from print, kept for C++
+	        allEffects$sharedDup[idx[-1]] <- TRUE
+	      }
+	    }
+	    ## Y[self] objective effects are not touched — separate parameters.
+	  }
+
 	  ## 3) Use the first slice's starting values as representative
 	  starts <- allStarts[[1]]
-	  
+
 	  list(effects = allEffects,
 	       starts  = starts,
 	       settingsDescription = settingsDescription)

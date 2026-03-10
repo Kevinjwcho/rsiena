@@ -67,6 +67,12 @@ print.sienaEffects <- function(x, fileName=NULL, includeOnly=TRUE,
         {
             included <- rep(TRUE, nrow(x))
         }
+        ## ★ shareParameters: hide duplicate slice copies of shared objective
+        ## effects. The canonical copy shows "(shared)" in its effectName;
+        ## duplicates are suppressed here but kept in the table for C++.
+        if (!is.null(x$sharedDup)) {
+            included <- included & !x$sharedDup
+        }
         if (dropRates)
         {
             included <- included & !x$basicRate

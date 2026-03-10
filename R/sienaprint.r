@@ -949,6 +949,15 @@ sienaFitThetaTable <- function(x, fromBayes=FALSE, tstat=FALSE, groupOnly=0, nfi
 		theEffects <- x$requestedEffects
     	theEffects <- theEffects[which(theEffects$type!='gmm'),]
 	}
+	## ★ shareParameters: remove sharedDup rows from the printed table.
+	## These are the fixed duplicate perception-slice copies; only the
+	## canonical shared parameter (and Y[self]) should appear in output.
+	if (!is.null(theEffects$sharedDup) && any(theEffects$sharedDup, na.rm=TRUE)) {
+		share_keep_idx <- which(!theEffects$sharedDup | is.na(theEffects$sharedDup))
+		theEffects <- theEffects[share_keep_idx, ]
+	} else {
+		share_keep_idx <- NULL
+	}
 	pp <- dim(theEffects)[1]
 	if (is.null(x$thetaFromFile))
 	{
@@ -1097,6 +1106,8 @@ sienaFitThetaTable <- function(x, fromBayes=FALSE, tstat=FALSE, groupOnly=0, nfi
 	    ses <- sqrt(diag(x$covtheta))
 	    ses[x$fixed[-which(x$requestedEffects$type=="gmm")]] <- NA
 	  }
+	  ## shareParameters: keep only non-sharedDup entries in ses
+	  if (!is.null(share_keep_idx)) ses <- ses[share_keep_idx]
 	}
 	if (fromBayes)
 	{
@@ -1118,6 +1129,8 @@ sienaFitThetaTable <- function(x, fromBayes=FALSE, tstat=FALSE, groupOnly=0, nfi
 		{
 			theta[diag(x$covtheta) < 0.0] <- NA
 		}
+		## shareParameters: keep only non-sharedDup entries in theta
+		if (!is.null(share_keep_idx)) theta <- theta[share_keep_idx]
 	}
 
 	if (nBehavs > 0)
@@ -1182,8 +1195,11 @@ sienaFitThetaTable <- function(x, fromBayes=FALSE, tstat=FALSE, groupOnly=0, nfi
 	}
 	if (!is.null(x$tstat))
 	{
+		tstat_vals <- x$tstat
+		## shareParameters: keep only non-sharedDup entries in tstat
+		if (!is.null(share_keep_idx)) tstat_vals <- tstat_vals[share_keep_idx]
 		mydf[1:nrates, "tstat"] <- NA
-		mydf[nrates + (1:xp), 'tstat' ] <- x$tstat
+		mydf[nrates + (1:xp), 'tstat' ] <- tstat_vals
 	}
 
 	if (nBehavs > 0 && nNetworks > 0)

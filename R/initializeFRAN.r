@@ -384,6 +384,42 @@ initializeFRAN <- function(z, x, data, effects, prevAns=NULL, initC,
     z$posj[requestedEffects$basicRate] <- TRUE
     z$BasicRateFunction <- z$posj
     z$gmmEffects <- ((requestedEffects$type=="gmm") & requestedEffects$fix) # hhoho
+
+    ## ★ threeway shareParameters: compute share groups and fix duplicate effects.
+    ## Uses the 'sharedDup' column set by threeWayNet() in effects.r.
+    ## Each group = [canonical_idx, dup1_idx, dup2_idx, ...] for one shortName.
+    ## Canonical has sharedDup=FALSE (name = "Y", no bracket);
+    ## duplicates have sharedDup=TRUE (name = "Y[2]", "Y[3]", etc.).
+    {
+      has_share <- !is.null(requestedEffects$sharedDup) &&
+                   any(requestedEffects$sharedDup, na.rm=TRUE)
+      if (has_share) {
+        ## For each duplicate shortName, find the canonical row too
+        dup_mask   <- !is.na(requestedEffects$sharedDup) & requestedEffects$sharedDup
+        dup_sns    <- unique(requestedEffects$shortName[dup_mask])
+        share_groups <- lapply(dup_sns, function(sn) {
+          ## canonical: specifically the Y[1] effect (name ends in "[1]"),
+          ## non-rate, NOT sharedDup.
+          ## Must NOT include Y[self] which also has sharedDup=FALSE.
+          canon <- which(requestedEffects$shortName == sn &
+                           !requestedEffects$basicRate &
+                           grepl("\\[1\\]$", requestedEffects$name))
+          ## duplicates: same shortName, sharedDup=TRUE
+          dups  <- which(requestedEffects$shortName == sn & dup_mask)
+          c(canon, dups)   ## canonical first, then duplicates
+        })
+        share_groups <- share_groups[sapply(share_groups, length) >= 2]
+        if (length(share_groups) > 0) {
+          dup_idx <- unlist(lapply(share_groups, function(g) g[-1]))
+          z$fixed[dup_idx] <- TRUE
+          z$threewayShareParams <- TRUE
+          z$threewayShareGroups <- share_groups
+          message(sprintf(
+            "threeway shareParameters: %d objective effect type(s), %d fixed duplicate(s).",
+            length(share_groups), length(dup_idx)))
+        }
+      }
+    }
     #browser()
     ## bugfix to allow use of intitializeFran without siena07
     if(is.null(z$thetaBound)) z$thetaBound <- 50
@@ -505,7 +541,7 @@ initializeFRAN <- function(z, x, data, effects, prevAns=NULL, initC,
     nets_names <- if (!is.null(f[[1]]$nets)) names(f[[1]]$nets) else character(0)
     slice_expanded_nets <- length(nets_names) > 0 &&
       any(grepl("]", nets_names, fixed = TRUE))
-    print(threeway_flag);print(slice_expanded_nets);print(nets_names)
+
     if (threeway_flag && slice_expanded_nets) {
       ## The *actual* unpacked oneMode networks are slice-named (Y[1]..Y[self])
       attr(f, "netnames") <- nets_names
@@ -895,6 +931,15 @@ initializeFRAN <- function(z, x, data, effects, prevAns=NULL, initC,
           message("length of given targets = ", x$targets, ",")
           message("but there are ", length(z$targets), " parameters to be estimated.")
           warning("targets as given in the call of siena07 have incorrect length")
+        }
+      }
+      ## ★ shareParameters: aggregate observed targets across perception slices.
+      ## Canonical slot gets Σᵢ z_ir; duplicate slots get 0.
+      ## This implements: Σᵢ z_ir - Σᵢ E[Ẑ_ijr] = 0  (see writing_group.pdf).
+      if (isTRUE(z$threewayShareParams)) {
+        for (grp in z$threewayShareGroups) {
+          z$targets[grp[1]] <- sum(z$targets[grp])
+          z$targets[grp[-1]] <- 0
         }
       }
     }
