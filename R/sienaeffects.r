@@ -73,14 +73,38 @@ includeEffects <- function(myeff, ..., include=TRUE, name=myeff$name[1],
     myeff$interaction1 == interaction1 &
     myeff$interaction2 == interaction2
   
-  ## If user specified a slice tag explicitly, additionally filter by effectName suffix.
-  if (sliceTag != "") {
+  ## Special handling for Y[shared]: match by name directly (not effectName suffix),
+  ## then cascade include/test/fix to the hidden sharedDup rows (Y[2]..Y[K]).
+  if (sliceTag == "[shared]") {
+    ## Match canonical rows by name exactly ("Y[shared]")
+    use <- myeff$shortName %in% effectNames &
+      myeff$type == type &
+      myeff$name == name &
+      myeff$interaction1 == interaction1 &
+      myeff$interaction2 == interaction2
+  } else if (sliceTag != "") {
+    ## Original behaviour: filter by effectName suffix for other slice tags
     use <- use & endsWith(myeff$effectName, sliceTag)
   }
-  
+
 	myeff[use, "include"] <- include
 	myeff[use, "test"] <- test
 	myeff[use, "fix"] <- fix
+
+  ## Cascade to sharedDup rows: when canonical shared effect is activated,
+  ## also activate the hidden duplicate rows (Y[2]..Y[K] same shortName).
+  if (!is.null(myeff$sharedDup) && sliceTag == "[shared]") {
+    canon_sns <- unique(myeff$shortName[use])
+    for (sn in canon_sns) {
+      dup_rows <- !is.na(myeff$sharedDup) & myeff$sharedDup &
+                  myeff$shortName == sn & myeff$type == type &
+                  myeff$interaction1 == interaction1 &
+                  myeff$interaction2 == interaction2
+      myeff[dup_rows, "include"] <- include
+      myeff[dup_rows, "test"]    <- test
+      myeff[dup_rows, "fix"]     <- fix
+    }
+  }
   	if (sum(myeff[use, "type"]=="gmm") > 0)
   	{
 	    stop("\n To include a GMoM statistic use the function includeGMoMStatistics.")

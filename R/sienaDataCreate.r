@@ -2736,8 +2736,12 @@ covarDist2 <- function(z)
 ##@calcCovarDist2 DataCreate similarity mean for alter of this depvar
 calcCovarDist2 <- function(covar, depvar, rval=NULL)
 {
-	## remove final obs from depvars
-	observations <- attr(depvar, "netdims")[3] - 1
+	threeway <- identical(attr(depvar, "type"), "threeway")
+
+	## For threeway (n x n x n x T): T is the 4th dimension.
+	## For oneMode  (n x n x T):     T is the 3rd dimension.
+	nd <- attr(depvar, "netdims")
+	observations <- ifelse(threeway, nd[4] - 1, nd[3] - 1)
 
 	simTotal <- rep(NA, observations)
 	simCnt <- rep(NA, observations)
@@ -2752,7 +2756,17 @@ calcCovarDist2 <- function(covar, depvar, rval=NULL)
 		{
 			xx <- covar[, i]
 		}
-		if (attr(depvar, "sparse"))
+		if (threeway)
+		{
+			## Sum across the perceiver dimension (dim 1) to obtain an n x n
+			## sender-receiver count matrix, then apply the same centering
+			## logic as for oneMode.  This computes:
+			##   simMeans = weighted mean of v_k over all observed (i,j,k,t)
+			## without first collapsing to a consensus network.
+			dep <- apply(depvar[, , , i, drop = FALSE], c(2, 3), sum)
+			dep[dep %in% c(10, 11)] <- dep[dep %in% c(10, 11)] - 10
+		}
+		else if (attr(depvar, "sparse"))
 		{
 			dep <- depvar[[i]]
 			dep@x[dep@x %in% c(10, 11)] <- dep@x[dep@x %in% c(10, 11)] - 10

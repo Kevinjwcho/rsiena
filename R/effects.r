@@ -840,37 +840,72 @@ getEffects <- function(x, nintn = 10, behNintn=4, getDocumentation=FALSE, onePer
 	  allEffects <- rbind(allEffects, tmpSelf$effects)
 	  ## If needed, you could store tmpSelf$starts as well.
 
-	  ## ★ shareParameters: mark duplicate objective effects so print() hides them.
-	  ## Canonical copy (Y[1]) gets "(shared)" suffix in effectName and name="Y".
+	  ## ★ shareParameters / sharedCov: mark duplicate objective effects.
+	  ## Canonical copy (Y[1]) gets "(shared)" suffix in effectName and name="Y[shared]".
 	  ## Duplicates (Y[2]..Y[K]) are marked sharedDup=TRUE — hidden from print
 	  ## but kept in the table so C++ can compute per-slice statistics.
 	  ## Y[self] is intentionally excluded: its parameters are estimated separately.
+	  ##
+	  ## shareParameters controls structural effects (interaction1 == "").
+	  ## sharedCov      controls covariate effects  (interaction1 != "").
+	  ## Both use (shortName, interaction1, interaction2) as the group key so that
+	  ## e.g. sameX(sex) and sameX(race) are treated as separate share groups.
 	  allEffects$sharedDup <- FALSE
-	  if (isTRUE(attr(depvar, "shareParameters"))) {
-	    ## Only share objective effects from numeric perception slices: Y[1], Y[2], ...
-	    ## Y[self] is estimated separately and is NOT included in the share group.
-	    is_perc_obj <- !allEffects$basicRate &
-	                   grepl("\\[[0-9]+\\]$", allEffects$name)
-	    obj_sns <- unique(allEffects$shortName[is_perc_obj])
-	    for (sn in obj_sns) {
-	      idx <- which(allEffects$shortName == sn & is_perc_obj)
+
+	  ## Helper: apply shared-parameter marking to a subset of rows in allEffects.
+	  ## 'mask' selects which rows are candidates; grouping is by the triple key.
+	  .markSharedDups <- function(ae, mask, vname) {
+	    keys <- unique(data.frame(
+	      sn  = ae$shortName[mask],
+	      i1  = ae$interaction1[mask],
+	      i2  = ae$interaction2[mask],
+	      stringsAsFactors = FALSE
+	    ))
+	    for (r in seq_len(nrow(keys))) {
+	      idx <- which(mask &
+	                   ae$shortName   == keys$sn[r] &
+	                   ae$interaction1 == keys$i1[r] &
+	                   ae$interaction2 == keys$i2[r])
 	      if (length(idx) >= 2) {
-	        ## canonical (Y[1]): keep name="Y[1]" (required for network matching).
-	        ## Strip the slice index "[1]" from effectName so the display reads
-	        ## e.g. "outdegree (density) (shared)" instead of "outdegree (density)[1] (shared)".
-	        clean_effectName <- gsub("\\s*\\[1\\]", "", allEffects$effectName[idx[1]])
-	        allEffects$effectName[idx[1]] <- paste0(clean_effectName, " (shared)")
-	        ## initialValue: mean across all K perception slices.
-	        ## Each slice has its own data-driven starting value (e.g. outdegree
-	        ## initialValue = observed density per slice, which varies), so the
-	        ## mean is the natural unbiased starting point for the shared β.
-	        shared_init <- mean(allEffects$initialValue[idx])
-	        allEffects$initialValue[idx] <- shared_init   ## all slices start at same θ
-	        ## duplicates (Y[2]..Y[K]): hidden from print, kept for C++
-	        allEffects$sharedDup[idx[-1]] <- TRUE
+	        ae$name[idx[1]] <- paste0(vname, "[shared]")
+	        clean_effectName <- gsub("\\s*\\[1\\]", "", ae$effectName[idx[1]])
+	        ae$effectName[idx[1]] <- paste0(clean_effectName, " (shared)")
+	        shared_init <- mean(ae$initialValue[idx])
+	        ae$initialValue[idx] <- shared_init
+	        ae$sharedDup[idx[-1]] <- TRUE
 	      }
 	    }
+	    ae
+	  }
+
+	  ## Perception-slice objective rows (excludes rate and Y[self]).
+	  is_perc_obj <- !allEffects$basicRate &
+	                 grepl("\\[[0-9]+\\]$", allEffects$name)
+
+	  ## structural effects: interaction1 == ""
+	  if (isTRUE(attr(depvar, "shareParameters"))) {
+	    is_structural <- is_perc_obj & (allEffects$interaction1 == "")
+	    allEffects <- .markSharedDups(allEffects, is_structural, varname)
+	  }
+
+	  ## covariate effects: interaction1 != ""
+	  if (isTRUE(attr(depvar, "sharedCov"))) {
+	    is_covariate <- is_perc_obj & (allEffects$interaction1 != "")
+	    allEffects <- .markSharedDups(allEffects, is_covariate, varname)
+	  }
+
+	  if (isTRUE(attr(depvar, "shareParameters")) || isTRUE(attr(depvar, "sharedCov"))) {
 	    ## Y[self] objective effects are not touched — separate parameters.
+
+	    ## Reorder: move Y[shared] rows to the top so they appear before
+	    ## per-slice rate parameters in print output.
+	    shared_name <- paste0(varname, "[shared]")
+	    is_shared_row <- allEffects$name == shared_name
+	    if (any(is_shared_row)) {
+	      allEffects <- rbind(allEffects[is_shared_row, ],
+	                          allEffects[!is_shared_row, ])
+	      row.names(allEffects) <- seq_len(nrow(allEffects))
+	    }
 	  }
 
 	  ## 3) Use the first slice's starting values as representative

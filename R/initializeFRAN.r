@@ -299,10 +299,24 @@ initializeFRAN <- function(z, x, data, effects, prevAns=NULL, initC,
       interactionNos
     effects$requested <- effects$include
     requestedEffects <- effects[effects$include, ]
-    
+
     effects$include[interactions] <- TRUE
     effects <- effects[effects$include, ]
-    
+
+    ## --- BEGIN: Y[shared] -> Y[1] remap ---
+    ## When shareParameters=TRUE, the canonical objective effect has name="Y[shared]"
+    ## (set in effects.r for user-facing display / includeEffects API).
+    ## Before any internal matching or C++ dispatch, remap it back to "Y[1]"
+    ## so that all downstream netnames checks and splitFactor logic work unchanged.
+    .remap_shared <- function(nm) gsub("\\[shared\\]$", "[1]", nm)
+    if (any(grepl("\\[shared\\]$", requestedEffects$name))) {
+      requestedEffects$name <- .remap_shared(requestedEffects$name)
+    }
+    if (any(grepl("\\[shared\\]$", effects$name))) {
+      effects$name <- .remap_shared(effects$name)
+    }
+    ## --- END: Y[shared] -> Y[1] remap ---
+
     ## split and rejoin both versions before continuing
     depvarnames <- names(data[[1]]$depvars)
     
@@ -398,11 +412,12 @@ initializeFRAN <- function(z, x, data, effects, prevAns=NULL, initC,
         dup_mask   <- !is.na(requestedEffects$sharedDup) & requestedEffects$sharedDup
         dup_sns    <- unique(requestedEffects$shortName[dup_mask])
         share_groups <- lapply(dup_sns, function(sn) {
-          ## canonical: specifically the Y[1] effect (name ends in "[1]"),
-          ## non-rate, NOT sharedDup.
-          ## Must NOT include Y[self] which also has sharedDup=FALSE.
+          ## canonical: name ends in "[1]" (was "Y[shared]", remapped above),
+          ## non-rate, NOT sharedDup. Excludes Y[self] which shares the same
+          ## shortName but has sharedDup=FALSE and name ending in "[self]".
           canon <- which(requestedEffects$shortName == sn &
                            !requestedEffects$basicRate &
+                           !requestedEffects$sharedDup &
                            grepl("\\[1\\]$", requestedEffects$name))
           ## duplicates: same shortName, sharedDup=TRUE
           dups  <- which(requestedEffects$shortName == sn & dup_mask)

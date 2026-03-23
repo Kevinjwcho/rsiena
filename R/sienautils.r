@@ -415,6 +415,7 @@ varDyadCovar<- function(val, centered=TRUE, nodeSets=c("Actors","Actors"),
 sienaDependent <- function(netarray,
                            type = c("oneMode","bipartite","behavior","continuous","threeway"), # ★ threeway added
                            shareParameters = FALSE,
+                           sharedCov = FALSE,
                            nodeSet = "Actors",
                            sparse = is.list(netarray),
                            allowOnly = TRUE,
@@ -584,6 +585,10 @@ sienaDependent <- function(netarray,
     warning("shareParameters=TRUE is only meaningful for type='threeway'. Ignoring.")
     shareParameters <- FALSE
   }
+  if (!identical(type, "threeway") && isTRUE(sharedCov)) {
+    warning("sharedCov=TRUE is only meaningful for type='threeway'. Ignoring.")
+    sharedCov <- FALSE
+  }
   
   # For all types, we need at least 2 waves (observations)
   # - behavior: netdims is N×1×T after reshaping
@@ -688,6 +693,7 @@ sienaDependent <- function(netarray,
   attr(obj, "netdims")   <- netdims
   attr(obj, "allowOnly") <- allowOnly
   attr(obj, "shareParameters") <- shareParameters
+  attr(obj, "sharedCov")       <- sharedCov
 
 
   if (!is.null(imputationValues))
