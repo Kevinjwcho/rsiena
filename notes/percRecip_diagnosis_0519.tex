@@ -1,0 +1,209 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  frame=single,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\newcommand{\perc}{\mathrm{perc}}
+\newcommand{\self}{\mathrm{self}}
+\newcommand{\file}[1]{\texttt{#1}}
+
+\title{Three-way \texttt{percRecip} Diagnosis Log\\[4pt]
+\large May 19, 2026}
+\author{Jinwoo Cho}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Goal Statistic}
+
+Recover the parameter $\beta$ for
+\[
+s \;=\; \sum_i \sum_j Y[\self]_{i,j} \cdot Y[i]_{j,i}
+\]
+across $K$ perceiver slices, with a single shared $\beta$.  Intuition:
+``actor $i$'s self-reported tie to $j$ is reciprocated in $i$'s own
+perceived view.''
+
+%% ============================================================
+\section{Why the Original Intra-Slice Implementation Failed}
+%% ============================================================
+
+The original \file{ThreeWayPerceivedReciprocityEffect} treated the
+statistic as intra-slice:
+\[
+s_i \;=\; \sum_k Y[i]_{i,k} \cdot Y[i]_{k,i}
+\]
+
+This is \emph{identically zero} in the three-way fork.
+\file{initializeFRAN.r:2289--2296} marks perceiver $i$'s own row of
+slice $Y[i]$ as structural-zero (value~10):
+\begin{lstlisting}[language=R]
+## Mark perceiver k's own row as structural zeros (value 10).
+## Perceiver k's self-reported ties (x_{k,k,*}) are handled
+## exclusively by Y[self]; setting row k to structural 10 prevents
+## the simulation engine from creating ministeps in these positions
+## and avoids double-counting with Y[self].
+for (tt in 1:TT) {
+  arr3[k, , tt] <- ifelse(is.na(arr3[k, , tt]), NA, 10)
+}
+\end{lstlisting}
+
+Hence $Y[i]_{i,k} = 0$ structurally and $s_i \equiv 0$.  C++ debug
+(\texttt{[percRecip tieStat total]}) confirmed $> 22$ million calls
+with \emph{zero} non-zero returns.  This file is now orphaned;
+see \file{src/model/effects/ThreeWayPerceivedReciprocityEffect.h}
+header notice.
+
+%% ============================================================
+\section{Replacement: Cross-Network Direction-1 Effect}
+%% ============================================================
+
+The target statistic is fundamentally cross-network.  In the unpacked
+threeway tensor:
+\[
+Y[\self]_{i,j} \;=\; \text{depvar}[i,i,j]
+\quad\text{(self-net diagonals)},
+\qquad
+Y[i]_{j,i} \;=\; \text{depvar}[i,j,i]
+\quad\text{(perceived row $j \neq i$)}.
+\]
+The natural implementation is on each perceived slice $Y[i]$'s
+objective, referencing $Y[\self]$ via \texttt{interaction1}.  For a tie
+flip $(e\!g\!o, alter)$ in $Y[i]$ with perceiver index $i$:
+\[
+\Delta s_i \;=\;
+\begin{cases}
+Y[\self]_{i, ego} & \text{if } alter = i\\
+0                  & \text{otherwise}
+\end{cases}
+\]
+
+This is implemented as
+\file{src/model/effects/generic/PerceiverRestrictedInTieFunction.{h,cpp}},
+wired in \file{EffectFactory.cpp} as
+\begin{lstlisting}[language=C++]
+else if (effectName == "percRecip")
+{
+    pEffect = new GenericNetworkEffect(pEffectInfo,
+        new PerceiverRestrictedInTieFunction(
+            pEffectInfo->interactionName1(),
+            pEffectInfo->variableName()));
+}
+\end{lstlisting}
+The function parses the perceiver index from the \emph{outcome}
+variable name (\texttt{Y[k]} $\to k\!-\!1$) and gates on
+\texttt{alter == perceiverIndex} before returning
+\texttt{Y[self]\_\{alter, ego\}} via \texttt{InTieFunction}'s
+\texttt{pNetworkCache()->inTieValue(alter)}.
+
+%% ============================================================
+\section{Open Issue (Blocking Recovery)}
+%% ============================================================
+
+Despite the conceptually correct cross-network implementation, MoM
+recovery still fails: \texttt{percRecip-hat} stuck at $0$,
+\texttt{tconv.max = NA}, all SEs \texttt{NA}.  The same failure
+\textbf{occurs with the standard, well-tested \texttt{crprodRecip}
+effect under our harness}.  Diagnostic sequence:
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{\file{diagnose\_percRecip\_simulator.R}} (May 19):
+        sim with $\beta\!=\!0$ vs $\beta\!=\!5$ on Y[self] objective
+        produced identical wave-2 (stat $=3$ in both, diff $=0$).
+  \item Confirmed \textbf{Y[self] does not evolve}: 0/400 cells changed
+        across all draws, even with rate=30.  Y[i] does evolve
+        (45/8000 cells).  Therefore effects on Y[self]'s objective
+        cannot contribute to any choice probability.
+  \item Switched to Direction~1 (effect on $Y[i]$, interaction1 =
+        $Y[\self]$).  Still $\beta\!=\!0$ vs $\beta\!=\!5$ yields
+        identical trajectories.
+  \item \textbf{\file{diagnose\_baseline\_crprodRecip.R}}: the
+        \emph{standard} \texttt{crprodRecip} also fails to influence
+        the simulator under our harness.  $\beta\!=\!0$ vs
+        $\beta\!=\!5$ both give stat $=76$.  So the bug is
+        \textbf{not} in our custom function.
+  \item \textbf{\file{diagnose\_no\_share\_crprodRecip.R}}: turning
+        off \texttt{shareParameters} and using a single slice does
+        not fix it either.  $\beta$ still has no effect.
+  \item \textbf{\file{diagnose\_estimation\_mode.R}}: even in proper
+        estimation mode (not \texttt{simOnly}), with R-side manually
+        generated wave-2 that has 1583/8000 cells changed and a
+        strong embedded \texttt{crprodRecip} signal,
+        \texttt{crprodRecip-hat} stays at $0$ with \texttt{tconv.max
+        = 0.234} (false ``convergence'').
+  \item Adding \texttt{sharedCov=TRUE} to \texttt{sienaDependent}
+        (the missing argument from the user's earlier successful
+        \file{tests/test\_crprod\_effects.R}) did not change the
+        outcome.
+\end{enumerate}
+
+\paragraph{Conclusion.}
+The cross-network mechanism (any \texttt{crprod}-family effect on a
+perceived slice $Y[i]$ with \texttt{interaction1 = "Y[self]"}) does not
+currently influence the simulator's choice probabilities for threeway
+data in this fork, regardless of \texttt{shareParameters},
+\texttt{sharedCov}, share-canonical setup, or
+estimation-vs-\texttt{simOnly} mode.  The bug is somewhere in the path
+between effect registration (effects table $\to$ requestedEffects
+$\to$ C++ factory) and the simulator's evaluation function for $Y[i]$
+when the referenced \texttt{interaction1} network is $Y[\self]$.
+
+\paragraph{Next steps to investigate (future session).}
+\begin{itemize}[leftmargin=*]
+  \item Verify whether \texttt{percX} / \texttt{percSenderAgree}
+        (covariate-based three-way effects) recover correctly in this
+        harness.  If yes, the issue is specifically with
+        cross-NETWORK effects on $Y[i]$; if no, the whole $Y[i]$
+        objective machinery is impaired.
+  \item Trace the simulator-side wiring: confirm that for slice
+        $Y[i]$, the \texttt{percRecip} / \texttt{crprodRecip} effect
+        actually ends up in \texttt{NetworkVariable}'s evaluation
+        function with the correct $Y[\self]$ cache.
+  \item Compare against the user's older
+        \file{simulation\_crprod\_recovery.R} on a real-data run to
+        confirm whether the supposed earlier ``working'' state really
+        recovered cross-network parameters or just converged without
+        recovering them.
+\end{itemize}
+
+%% ============================================================
+\section{Files Touched This Session}
+%% ============================================================
+
+\begin{tabular}{@{}lll@{}}
+\toprule
+File & Status & Purpose \\
+\midrule
+\file{src/.../PerceiverRestrictedInTieFunction.h} & new   & header for cross-network function\\
+\file{src/.../PerceiverRestrictedInTieFunction.cpp} & new & impl with perceiver gating\\
+\file{src/.../ThreeWayPerceivedReciprocityEffect.h} & gutted & deprecation stub\\
+\file{src/.../ThreeWayPerceivedReciprocityEffect.cpp} & gutted & deprecation stub\\
+\file{src/.../AllEffects.h} & edit & drop old percRecip include, add notice\\
+\file{src/.../EffectFactory.cpp} & edit & rewire \texttt{percRecip} branch\\
+\file{src/sources.list} & edit & swap old percRecip src for new fn src\\
+\file{src/Makevars.win} & edit & same as sources.list\\
+\file{data/allEffects.csv} & edit & \texttt{percRecip} row $\to$ cross-network\\
+\file{tests/recovery\_percRecip.R} & rewrite & moved from project root + new flow\\
+\file{tests/diagnose\_*.R} & new (6 files) & step-wise isolation diagnostics\\
+\file{tests/recovery\_percRecip\_*.{rds,csv}} & artifacts & last-run outputs\\
+\file{notes/percRecip\_diagnosis\_0519.tex} & new & this document\\
+\bottomrule
+\end{tabular}
+
+\end{document}

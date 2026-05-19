@@ -1,0 +1,357 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  frame=single,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  showstringspaces=false,
+  columns=fullflexible,
+  keepspaces=true
+}
+
+\newcommand{\perc}{\mathrm{perc}}
+\newcommand{\self}{\mathrm{self}}
+\newcommand{\file}[1]{\texttt{#1}}
+
+\title{Adding a \texttt{percRecip} Effect to the Three-Way SAOM\\[4pt]
+\large Implementation Log --- April 30, 2026}
+\author{Jinwoo Cho}
+\date{}
+
+\begin{document}
+\maketitle
+
+%% ==========================================================
+\section{Overview}
+%% ==========================================================
+
+This note records every change made to the RSiena fork to add the
+\emph{perceived reciprocity} effect (\texttt{percRecip}) and to set up a
+parameter-recovery study for it.  Two layers of work were involved:
+
+\begin{enumerate}[leftmargin=*]
+  \item A new C++ effect class plus its registration in the build
+        wiring.  This is required because the statistic
+        $\sum_i \sum_j x_{iij} x_{iji}$ is not expressible as a
+        \texttt{crprod} of two existing dependent networks --- the two
+        ``diagonals'' it pairs come from the same simulated three-way
+        object, so the existing effect framework cannot evaluate the
+        contribution function without code-level support.
+  \item An R-side recovery harness driven by
+        \texttt{siena07(simOnly = TRUE)} that exercises the new effect
+        end-to-end against a known truth.  Several iterations were
+        needed to align the harness with the fork's three-way mode.
+\end{enumerate}
+
+\paragraph{Statistic.}
+For perceiver $i$, sender $j$, receiver $k$, define the per-slice
+statistic
+\[
+s_i \;=\; \sum_{k} x_{i,i,k}\, x_{i,k,i},
+\]
+i.e., the count of alters $m$ such that perceiver $i$ believes there is a
+mutual tie between $i$ and $m$.  Aggregated across slices,
+\[
+S \;=\; \sum_{i} s_i \;=\; \sum_{i}\sum_{k} x_{iik}\, x_{iki},
+\]
+which is the perceived reciprocity statistic.
+
+%% ==========================================================
+\section{C++ Effect Class}
+%% ==========================================================
+
+Two new source files implement the effect, modeled on the existing
+\file{ThreeWayPerceiverEffect} pair:
+
+\begin{itemize}[leftmargin=*]
+  \item \file{src/model/effects/ThreeWayPerceivedReciprocityEffect.h}
+  \item \file{src/model/effects/ThreeWayPerceivedReciprocityEffect.cpp}
+\end{itemize}
+
+The class derives directly from \texttt{NetworkEffect} (no covariate
+dependence), parses the perceiver index $i$ from the variable name
+\texttt{Y[n]} at \texttt{initialize()} time, and defines the two
+required virtual methods.
+
+\paragraph{Contribution function.}
+With \texttt{ego} $= j$, \texttt{alter} $= k$, and perceiver $i$ stored
+as \texttt{lperceiverIndex},
+\[
+\Delta s_i \;=\;
+\begin{cases}
+P^{(i)}_{k,i} & \text{if } j = i \quad \text{(toggling } i\!\to\!k\text{)}\\[2pt]
+P^{(i)}_{i,j} & \text{if } k = i \quad \text{(toggling } j\!\to\!i\text{)}\\[2pt]
+0 & \text{otherwise.}
+\end{cases}
+\]
+
+The corresponding code:
+
+\begin{lstlisting}[language=C++]
+double ThreeWayPerceivedReciprocityEffect::calculateContribution(
+    int alter) const
+{
+    const int ego = this->ego();
+    const int i   = this->lperceiverIndex;
+
+    if (ego == i) {
+        return this->inTieExists(alter) ? 1.0 : 0.0;
+    }
+    if (alter == i) {
+        return this->pNetwork()->tieValue(i, ego) != 0 ? 1.0 : 0.0;
+    }
+    return 0.0;
+}
+\end{lstlisting}
+
+\paragraph{Evaluation statistic.}
+\texttt{tieStatistic(alter)} sums to $s_i$ when invoked over every
+existing tie of the slice.  To avoid double-counting each reciprocated
+pair (visited once as $(i,m)$ and once as $(m,i)$), the routine returns
+$1$ only on the leg where \texttt{ego} $=$ \texttt{lperceiverIndex}:
+
+\begin{lstlisting}[language=C++]
+double ThreeWayPerceivedReciprocityEffect::tieStatistic(int alter)
+{
+    const int ego = this->ego();
+    const int i   = this->lperceiverIndex;
+    if (ego == i && this->inTieExists(alter))
+        return 1.0;
+    return 0.0;
+}
+\end{lstlisting}
+
+%% ==========================================================
+\section{Build Wiring}
+%% ==========================================================
+
+The new files must be visible to the compiler, the effect factory, the
+package's master include, and the metadata table that drives the R
+side.  Five files were touched.
+
+\paragraph{1.\ \file{src/model/effects/AllEffects.h}.}
+Added
+\verb|#include "ThreeWayPerceivedReciprocityEffect.h"| at the bottom of
+the three-way SAOM block, alongside the existing perceiver-attribute
+effects.
+
+\paragraph{2.\ \file{src/model/effects/EffectFactory.cpp}.}
+A new branch in the \texttt{createEffect()} dispatch maps the short
+name to the C++ class:
+\begin{lstlisting}[language=C++]
+else if (effectName == "percRecip")
+{
+    pEffect = new ThreeWayPerceivedReciprocityEffect(pEffectInfo);
+}
+\end{lstlisting}
+Inserted directly after the existing \texttt{percSenderAgree} branch.
+
+\paragraph{3.\ Source-list files.}
+The package uses a configure-time substitution from
+\file{src/sources.list} into \file{src/Makevars.in}.  We appended
+\texttt{model/effects/ThreeWayPerceivedReciprocityEffect.cpp} to all
+three:
+\begin{itemize}[leftmargin=*]
+  \item \file{src/sources.list}
+  \item \file{src/Makevars}
+  \item \file{src/Makevars.win}
+\end{itemize}
+The first is the canonical source; the second is regenerated by
+\file{configure}; the third is the Windows build file.
+
+\paragraph{4.\ \file{data/allEffects.csv}.}
+A new metadata row registers the effect for the R side:
+\begin{lstlisting}
+nonSymmetricObjective,perceived reciprocity,Number of perceiver-involved reciprocated ties,percRecip,TRUE,,,eval,FALSE,FALSE,FALSE,FALSE,FALSE,",",0,0,objective,NA,NA,0,0,0,0,dyadic,TRUE
+\end{lstlisting}
+Inserted directly after the standard \texttt{recip} row.  The companion
+\file{data/allEffects.R} reads the CSV unchanged, so no additional
+edits there.
+
+%% ==========================================================
+\section{R Recovery Harness}
+%% ==========================================================
+
+The recovery script \file{recovery\_percRecip.R} (project root) follows
+the standard two-stage pattern:
+
+\begin{enumerate}[leftmargin=*]
+  \item One \texttt{siena07(simOnly = TRUE, n3 = 50, returnDeps = TRUE)}
+        call draws 50 wave-2 realizations under known truth.
+  \item A 50-iteration estimation loop fits each replicate with a
+        fresh effects object and stores $\hat\theta$ together with its
+        SE.
+\end{enumerate}
+
+\subsection{Final pilot configuration}
+
+\begin{itemize}[leftmargin=*]
+  \item $n = 10$ actors, hence $K = 10$ perceiver slices.
+  \item Two waves, $50$ replications.
+  \item \texttt{shareParameters = TRUE} on the threeway dependent
+        variable: density, reciprocity, and \texttt{percRecip} share a
+        single $\beta$ across slices, materialized at \texttt{Y[shared]}.
+  \item \texttt{Y[self]}: density and reciprocity (no cross-network
+        \texttt{crprod} effects in the pilot).
+  \item Rate parameters set explicitly (see Section~\ref{sec:rates}).
+\end{itemize}
+
+Truth values:
+\[
+\rho_\perc = 6,\quad \rho_\self = 6,\quad
+\beta_{\text{dens}}^\perc = -2,\quad
+\beta_{\text{recip}}^\perc = 1.5,\quad
+\beta_{\text{percRecip}} = 0.8,\quad
+\beta_{\text{dens}}^\self = -2,\quad
+\beta_{\text{recip}}^\self = 1.5.
+\]
+
+\subsection{Iterations during debugging}
+
+Several issues surfaced while the script was being aligned with the
+fork's three-way API.  They are recorded here because each one masked
+the next.
+
+\paragraph{(a) Misuse of \texttt{sienaDependent(name = \dots)}.}
+Initial drafts called
+\verb|sienaDependent(arr, name = "Y[1]")|, which errored with
+``unused argument''.  \texttt{sienaDependent} has no \texttt{name}
+parameter; \texttt{sienaDataCreate} reads variable names from its own
+call expression via \texttt{substitute()}.  An interim fix used a
+\texttt{do.call} with a named list to bind the non-syntactic name
+\texttt{"Y[1]"}.  This was later replaced (see (b)) by the fork's
+native three-way constructor.
+
+\paragraph{(b) Wrong data construction for three-way mode.}
+The fork's \texttt{sienaDependent} accepts a 4D array of shape
+$(K,n,n,T)$ when \texttt{type = "threeway"} is supplied; the slice
+names and the self-net are derived automatically.  The harness was
+rewritten to use this API:
+
+\begin{lstlisting}[language=R]
+Y   <- sienaDependent(arr_4d, type = "threeway",
+                      shareParameters = TRUE)
+dat <- sienaDataCreate(Y)
+eff <- getEffects(dat)
+\end{lstlisting}
+
+\paragraph{(c) Canonical row name under \texttt{shareParameters}.}
+\texttt{R/effects.r} (line 1007) renames the first occurrence of every
+shared structural row from \texttt{Y[1]} to \texttt{Y[shared]}.
+Calls of the form
+\verb|setEffect(eff, density, name = "Y[1]", ...)|
+therefore failed with ``Effect not found''.  The fix replaces
+\texttt{Y[1]} with \texttt{Y[shared]} for all canonical-slice
+\texttt{setEffect} and \texttt{includeEffects} calls.
+
+\paragraph{(d) Spurious \texttt{fix = TRUE} for simulation.}
+\texttt{fix} controls estimation; under \texttt{simOnly = TRUE} no
+estimation occurs and \texttt{fix} is irrelevant.  All \texttt{fix =
+TRUE} flags were removed; only \texttt{initialValue} is needed to
+inject the true parameter values into the simulator.
+
+\paragraph{(e) Rate/density collinearity on \texttt{Y[self]}.}
+\label{sec:rates}
+The first complete run produced
+\begin{quote}\itshape
+\textsf{*** Standard errors not reliable *** \\
+The following is approximately a linear combination for which the data
+carries no information: $1\,\beta_{31} + 1\,\beta_{32}$.}
+\end{quote}
+The diagnostic \texttt{inc[c(31,32), c("name","shortName")]} identified
+the pair as \texttt{Y[self]} rate and \texttt{Y[self]} density.  The
+root cause was that no rate parameters had been set in \texttt{truth};
+the simulator used a default rate too small to produce identifiable
+movement on the self-net.  Two new entries
+(\texttt{rate\_perc}, \texttt{rate\_self}) were added to \texttt{truth}
+and fed in via a per-slice loop:
+\begin{lstlisting}[language=R]
+for (k in seq_len(n_actors)) {
+  sim_eff <- setEffect(sim_eff, Rate, type = "rate",
+                       name = paste0("Y[", k, "]"),
+                       period = 1,
+                       initialValue = truth["rate_perc"])
+}
+sim_eff <- setEffect(sim_eff, Rate, type = "rate",
+                     name = "Y[self]", period = 1,
+                     initialValue = truth["rate_self"])
+\end{lstlisting}
+The loop is necessary because \texttt{shareParameters} only
+share-marks \emph{structural} rows (\texttt{interaction1 == ""}); rate
+rows remain per-slice.
+
+\paragraph{(f) Silent name mismatch in the estimation loop.}
+\texttt{build\_rep\_data} originally bound the per-replicate dependent
+variable to the symbol \texttt{Yrep}, so the resulting slice names
+became \texttt{Yrep[shared]}, \texttt{Yrep[self]}, etc.  The loop's
+\verb|includeEffects(..., name = "Y[shared]")| therefore matched no
+row.  \texttt{includeEffects} does not stop on a missing name --- it
+emits a \texttt{cat} message and returns the table unchanged
+(\file{R/sienaeffects.r} lines 142--153).  Across 50 replications all
+\texttt{percRecip} and \texttt{recip} additions silently no-opped,
+yielding 50 \texttt{percRecip-hat = NA} estimates.  The fix is one
+line: bind the variable to \texttt{Y} inside \texttt{build\_rep\_data},
+matching the base data.
+
+%% ==========================================================
+\section{Files Modified or Created}
+%% ==========================================================
+
+\begin{tabular}{@{}lll@{}}
+\toprule
+File & Status & Purpose \\
+\midrule
+\file{src/model/effects/ThreeWayPerceivedReciprocityEffect.h}
+  & new & class declaration \\
+\file{src/model/effects/ThreeWayPerceivedReciprocityEffect.cpp}
+  & new & class implementation \\
+\file{src/model/effects/AllEffects.h}
+  & edit & include the new header \\
+\file{src/model/effects/EffectFactory.cpp}
+  & edit & dispatch \texttt{percRecip} short name \\
+\file{src/sources.list}
+  & edit & add new \texttt{.cpp} to canonical list \\
+\file{src/Makevars}
+  & edit & regenerated from \file{Makevars.in}; updated for parity \\
+\file{src/Makevars.win}
+  & edit & Windows source list \\
+\file{data/allEffects.csv}
+  & edit & metadata row for \texttt{percRecip} \\
+\file{recovery\_percRecip.R}
+  & new & two-stage recovery harness \\
+\file{notes/percRecip\_changes.tex}
+  & new & this note \\
+\bottomrule
+\end{tabular}
+
+%% ==========================================================
+\section{Status}
+%% ==========================================================
+
+\begin{itemize}[leftmargin=*]
+  \item C++ effect compiles cleanly under syntax-only check
+        (\texttt{g++ -fsyntax-only}) against the package include path.
+  \item Full installation via \texttt{devtools::load\_all()} succeeds
+        on the user's machine.
+  \item Simulation runs and produces valid wave-2 networks across all
+        50 replications.
+  \item Estimation loop now correctly includes \texttt{percRecip} and
+        the explicit rate parameters; the rate/density collinearity
+        warning has been addressed by setting non-default rates in
+        \texttt{truth}.
+  \item Pending: a clean recovery summary table showing recovered
+        $\hat\beta_{\text{percRecip}} \approx 0.8$ with reasonable
+        coverage.  After confirmation, the pilot lifts to a multi-slice
+        run with cross-network \texttt{crprod} effects re-enabled.
+\end{itemize}
+
+\end{document}
