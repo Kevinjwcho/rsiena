@@ -855,7 +855,15 @@ sienaDataCreate<- function(..., nodeSets=NULL, getDocumentation=FALSE)
 		      diag(a1[k, , ]) <- 0
 		      diag(a2[k, , ]) <- 0
 		    }
-		    
+
+		    ## Exclude perceiver k's own row from slice k distance:
+		    ## row k in slice Y[k] will be set to structural zeros in
+		    ## initializeFRAN, so it should not contribute to distance.
+		    for (k in 1:K) {
+		      a1[k, k, ] <- NA
+		      a2[k, k, ] <- NA
+		    }
+
 		    ## Slice-wise distances and parent aggregation
 		    for (k in 1:K) {
 		      diffk <- a2[k, , ] - a1[k, , ]

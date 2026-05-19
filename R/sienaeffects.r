@@ -46,6 +46,36 @@ includeEffects <- function(myeff, ..., include=TRUE, name=myeff$name[1],
 	{
 		stop("Effect cycle4ND now is called cycle4. Use the new name please.")
 	}
+  # --- threeway Direction 2 auto-default for `name` ---
+  # If interaction1 references a perceived slice (e.g. "Y[1]", "Y[2]", ...) or
+  # the aggregate marker "Y[shared]", AND the user did not explicitly pass
+  # `name`, then the only meaningful target objective is the self-report
+  # network "Y[self]". Auto-default name to "<base>[self]" in that case.
+  # This lets users write:
+  #   includeEffects(eff, crprod, interaction1 = "Y[1]")       # Dir 2, single slice
+  #   includeEffects(eff, crprod, interaction1 = "Y[shared]")  # Dir 2, aggregate
+  # without having to repeat `name = "Y[self]"`.
+  if (missing(name) && nzchar(interaction1)) {
+    m2 <- regexec("^(.*)\\[(.*)\\]$", interaction1)
+    r2 <- regmatches(interaction1, m2)[[1]]
+    if (length(r2) > 0) {
+      i1_base <- r2[2]
+      i1_tag  <- r2[3]
+      is_perc_ref <- (i1_tag == "shared") || grepl("^[0-9]+$", i1_tag)
+      if (is_perc_ref) {
+        self_candidate <- paste0(i1_base, "[self]")
+        if (self_candidate %in% myeff$name) {
+          name <- self_candidate
+          if (verbose) {
+            message("includeEffects: interaction1='", interaction1,
+                    "' -> auto-setting name='", self_candidate,
+                    "' (three-way Direction 2).")
+          }
+        }
+      }
+    }
+  }
+  # --- end auto-default ---
   # --- threeway slice support: name like "Y[1]" or "Y[self]" ---
   sliceTag <- ""
   baseName <- name
@@ -357,6 +387,28 @@ setEffect <- function(myeff, shortName, parameter=NULL,
 	{
 	    stop("\n To include a GMoM statistic use the function includeGMoMStatistics.")
 	}
+	# --- threeway Direction 2 auto-default for `name` (same rule as includeEffects) ---
+	if (missing(name) && nzchar(interaction1)) {
+		m2 <- regexec("^(.*)\\[(.*)\\]$", interaction1)
+		r2 <- regmatches(interaction1, m2)[[1]]
+		if (length(r2) > 0) {
+			i1_base <- r2[2]
+			i1_tag  <- r2[3]
+			is_perc_ref <- (i1_tag == "shared") || grepl("^[0-9]+$", i1_tag)
+			if (is_perc_ref) {
+				self_candidate <- paste0(i1_base, "[self]")
+				if (self_candidate %in% myeff$name) {
+					name <- self_candidate
+					if (verbose) {
+						message("setEffect: interaction1='", interaction1,
+								"' -> auto-setting name='", self_candidate,
+								"' (three-way Direction 2).")
+					}
+				}
+			}
+		}
+	}
+	# --- end auto-default ---
 	use <- myeff$shortName == shortName &
 			myeff$name == name &
 			myeff$type == type &

@@ -11,3 +11,5 @@
 ^README.md$
 ^.*\.code-workspace$
 NEWSnew.md
+^\.positai$
+^\.claude$

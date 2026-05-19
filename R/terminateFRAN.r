@@ -40,5 +40,17 @@ terminateFRAN <- function(z, x)
     {
         dimnames(z$dfra)[[1]] <- as.list(z$requestedEffects$shortName)
     }
+
+    ## --- BEGIN: restore Y[shared] names in output ---
+    ## initializeFRAN remapped Y[shared] -> Y[1] for internal C++ dispatch.
+    ## Restore the original user-facing names so that the returned
+    ## requestedEffects$name shows "Y[shared]" instead of "Y[1]".
+    if (!is.null(z$.shared_name_map) &&
+        length(z$.shared_name_map) == nrow(z$requestedEffects)) {
+      z$requestedEffects$name <- z$.shared_name_map
+    }
+    z$.shared_name_map <- NULL
+    ## --- END: restore Y[shared] names in output ---
+
     return(z)
 }

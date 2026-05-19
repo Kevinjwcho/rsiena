@@ -308,14 +308,91 @@ initializeFRAN <- function(z, x, data, effects, prevAns=NULL, initC,
     ## (set in effects.r for user-facing display / includeEffects API).
     ## Before any internal matching or C++ dispatch, remap it back to "Y[1]"
     ## so that all downstream netnames checks and splitFactor logic work unchanged.
+    ## NOTE: the name map for terminateFRAN restoration is saved AFTER the
+    ## split+rbind reordering (see below) so the row positions match.
     .remap_shared <- function(nm) gsub("\\[shared\\]$", "[1]", nm)
-    if (any(grepl("\\[shared\\]$", requestedEffects$name))) {
+    z$.has_shared_remap <- any(grepl("\\[shared\\]$", requestedEffects$name))
+    if (z$.has_shared_remap) {
       requestedEffects$name <- .remap_shared(requestedEffects$name)
     }
     if (any(grepl("\\[shared\\]$", effects$name))) {
       effects$name <- .remap_shared(effects$name)
     }
     ## --- END: Y[shared] -> Y[1] remap ---
+
+    ## --- BEGIN: Direction 2 aggregate expansion (interaction1 == "Y[shared]") ---
+    ## Rows whose interaction1 ends in "[shared]" are VIRTUAL aggregate markers
+    ## created by threeWayNet() in effects.r. They live only in Y[self]'s objective
+    ## and request "sum over all K perceived slices, tied to one β".
+    ##
+    ## Expansion: replace each such row with K rows whose interaction1 is
+    ## Y[1], Y[2], ..., Y[K] (real networks). First row is canonical
+    ## (sharedDup = FALSE); the rest are sharedDup = TRUE so the existing
+    ## share_groups machinery (below) ties their θ to the canonical row.
+    ##
+    ## K is inferred by scanning the unique Y[k] names already known to the
+    ## system (either via expanded depvars, via effects$name, or from the
+    ## requested rows themselves).
+    .has_i1_shared <- any(grepl("\\[shared\\]$", requestedEffects$interaction1))
+    if (.has_i1_shared) {
+      .count_K <- function(bn) {
+        cand <- c(unique(effects$name), unique(requestedEffects$name),
+                  names(data[[1]]$depvars))
+        slice_pat <- paste0("^", bn, "\\[[0-9]+\\]$")
+        length(unique(grep(slice_pat, cand, value = TRUE)))
+      }
+
+      ## Helper: take a data.frame (requestedEffects or effects) and expand
+      ## every row whose interaction1 ends in "[shared]" into K rows with
+      ## interaction1 = base[1..K]. Preserves column schema. Row 1 is
+      ## canonical (sharedDup=FALSE); rows 2..K are sharedDup=TRUE and have
+      ## " (agg)" stripped from effectName for clean printing.
+      .expand_shared <- function(df) {
+        if (!"interaction1" %in% names(df)) return(df)
+        mask <- grepl("\\[shared\\]$", df$interaction1)
+        if (!any(mask)) return(df)
+        keep_mask <- !mask
+        agg_idx   <- which(mask)
+        expanded_list <- list()
+        for (rr in agg_idx) {
+          base_i1 <- gsub("\\[shared\\]$", "", df$interaction1[rr])
+          K_here  <- .count_K(base_i1)
+          if (K_here < 1) {
+            warning("Direction 2 aggregate row could not infer K for base '",
+                    base_i1, "'; row left unexpanded.")
+            keep_mask[rr] <- TRUE
+            next
+          }
+          base_row <- df[rr, , drop = FALSE]
+          for (kk in seq_len(K_here)) {
+            nr <- base_row
+            nr$interaction1 <- paste0(base_i1, "[", kk, "]")
+            if ("sharedDup" %in% names(nr)) nr$sharedDup <- (kk > 1)
+            ## strip " (agg)" from dup effectNames ([self] suffix preserved).
+            if (kk > 1 && "effectName" %in% names(nr)) {
+              nr$effectName <- sub("\\s*\\(agg\\)", "", nr$effectName)
+            }
+            expanded_list[[length(expanded_list) + 1]] <- nr
+          }
+        }
+        if (length(expanded_list) > 0) {
+          df <- rbind(
+            df[keep_mask, , drop = FALSE],
+            do.call(rbind, expanded_list)
+          )
+          row.names(df) <- seq_len(nrow(df))
+        }
+        df
+      }
+
+      ## Expand BOTH tables in lockstep so row counts stay consistent.
+      ## requestedEffects is the working model table; effects is the full
+      ## catalog used later at line ~560 via effects[effects$requested,].
+      requestedEffects <- .expand_shared(requestedEffects)
+      effects          <- .expand_shared(effects)
+      z$.has_dir2_agg  <- TRUE
+    }
+    ## --- END: Direction 2 aggregate expansion ---
 
     ## split and rejoin both versions before continuing
     depvarnames <- names(data[[1]]$depvars)
@@ -372,7 +449,15 @@ initializeFRAN <- function(z, x, data, effects, prevAns=NULL, initC,
       stop("Internal error: requestedEffects became NULL after reordering. Check effects/name matching.")
     }
     row.names(requestedEffects) <- 1:nrow(requestedEffects)
-    
+
+    ## --- Save name map AFTER split+rbind so positions match the final order ---
+    ## Use reverse remap: Y[1] -> Y[shared] to reconstruct the user-facing names.
+    z$.shared_name_map <- NULL
+    if (isTRUE(z$.has_shared_remap)) {
+      .unremap_shared <- function(nm) gsub("\\[1\\]$", "[shared]", nm)
+      z$.shared_name_map <- .unremap_shared(requestedEffects$name)
+    }
+
     effects1 <- split(effects, effects$name)
     effects1order <- match(c(depvarnames, "sde"), names(effects1))
     
@@ -400,37 +485,59 @@ initializeFRAN <- function(z, x, data, effects, prevAns=NULL, initC,
     z$gmmEffects <- ((requestedEffects$type=="gmm") & requestedEffects$fix) # hhoho
 
     ## ★ threeway shareParameters: compute share groups and fix duplicate effects.
-    ## Uses the 'sharedDup' column set by threeWayNet() in effects.r.
-    ## Each group = [canonical_idx, dup1_idx, dup2_idx, ...] for one shortName.
-    ## Canonical has sharedDup=FALSE (name = "Y", no bracket);
-    ## duplicates have sharedDup=TRUE (name = "Y[2]", "Y[3]", etc.).
+    ## Uses the 'sharedDup' column set by threeWayNet() in effects.r (Direction 1)
+    ## and by the Direction 2 aggregate expansion above (Direction 2 aggregate).
+    ##
+    ## Two kinds of share groups exist per shortName:
+    ##   Direction 1 (per-slice objective ← Y[self]):
+    ##     canonical:  name ends in "[1]" (was "Y[shared]"), interaction1 ≈ Y[self]
+    ##     duplicates: name ends in "[2]..[K]", same shortName, sharedDup=TRUE
+    ##   Direction 2 aggregate (Y[self] objective ← all slices):
+    ##     canonical:  name ends in "[self]", interaction1 ends in "[1]"
+    ##     duplicates: name ends in "[self]", interaction1 ends in "[2]..[K]"
+    ##
+    ## Y[self] Direction 1 rows (sharedDup=FALSE, name ends in [self]) are not tied.
     {
       has_share <- !is.null(requestedEffects$sharedDup) &&
                    any(requestedEffects$sharedDup, na.rm=TRUE)
       if (has_share) {
-        ## For each duplicate shortName, find the canonical row too
-        dup_mask   <- !is.na(requestedEffects$sharedDup) & requestedEffects$sharedDup
-        dup_sns    <- unique(requestedEffects$shortName[dup_mask])
-        share_groups <- lapply(dup_sns, function(sn) {
-          ## canonical: name ends in "[1]" (was "Y[shared]", remapped above),
-          ## non-rate, NOT sharedDup. Excludes Y[self] which shares the same
-          ## shortName but has sharedDup=FALSE and name ending in "[self]".
-          canon <- which(requestedEffects$shortName == sn &
-                           !requestedEffects$basicRate &
-                           !requestedEffects$sharedDup &
-                           grepl("\\[1\\]$", requestedEffects$name))
-          ## duplicates: same shortName, sharedDup=TRUE
-          dups  <- which(requestedEffects$shortName == sn & dup_mask)
-          c(canon, dups)   ## canonical first, then duplicates
-        })
-        share_groups <- share_groups[sapply(share_groups, length) >= 2]
+        dup_mask <- !is.na(requestedEffects$sharedDup) & requestedEffects$sharedDup
+        dup_sns  <- unique(requestedEffects$shortName[dup_mask])
+
+        share_groups <- list()
+        for (sn in dup_sns) {
+          ## -- Direction 1 group: canonical name ends in [1], NOT in [self] --
+          canon_d1 <- which(requestedEffects$shortName == sn &
+                            !requestedEffects$basicRate &
+                            !requestedEffects$sharedDup &
+                            grepl("\\[1\\]$", requestedEffects$name) &
+                            !grepl("\\[self\\]$", requestedEffects$name))
+          dups_d1  <- which(requestedEffects$shortName == sn & dup_mask &
+                            !grepl("\\[self\\]$", requestedEffects$name))
+          if (length(canon_d1) > 0 && length(dups_d1) > 0) {
+            share_groups[[length(share_groups) + 1]] <- c(canon_d1, dups_d1)
+          }
+
+          ## -- Direction 2 aggregate group: name == "<base>[self]", i1 ends in [1] --
+          canon_d2 <- which(requestedEffects$shortName == sn &
+                            !requestedEffects$basicRate &
+                            !requestedEffects$sharedDup &
+                            grepl("\\[self\\]$", requestedEffects$name) &
+                            grepl("\\[1\\]$", requestedEffects$interaction1))
+          dups_d2  <- which(requestedEffects$shortName == sn & dup_mask &
+                            grepl("\\[self\\]$", requestedEffects$name))
+          if (length(canon_d2) > 0 && length(dups_d2) > 0) {
+            share_groups[[length(share_groups) + 1]] <- c(canon_d2, dups_d2)
+          }
+        }
+
         if (length(share_groups) > 0) {
           dup_idx <- unlist(lapply(share_groups, function(g) g[-1]))
           z$fixed[dup_idx] <- TRUE
           z$threewayShareParams <- TRUE
           z$threewayShareGroups <- share_groups
           message(sprintf(
-            "threeway shareParameters: %d objective effect type(s), %d fixed duplicate(s).",
+            "threeway shareParameters: %d objective effect group(s), %d fixed duplicate(s).",
             length(share_groups), length(dup_idx)))
         }
       }
@@ -2178,6 +2285,15 @@ unpackData <- function(data, x)
     for (k in 1:K) {
       arr3 <- depvar[k, , , , drop = TRUE]  ## n x n x T
       dim(arr3) <- c(n1, n2, TT)
+
+      ## Mark perceiver k's own row as structural zeros (value 10).
+      ## Perceiver k's self-reported ties (x_{k,k,*}) are handled
+      ## exclusively by Y[self]; setting row k to structural 10
+      ## prevents the simulation engine from creating ministeps
+      ## in these positions and avoids double-counting with Y[self].
+      for (tt in 1:TT) {
+        arr3[k, , tt] <- ifelse(is.na(arr3[k, , tt]), NA, 10)
+      }
       
       class(arr3) <- "sienaDependent"
       attr(arr3, "type") <- "oneMode"
@@ -2199,12 +2315,10 @@ unpackData <- function(data, x)
       attr(arr3, "allUpOnly") <- FALSE
       attr(arr3, "allDownOnly") <- FALSE
       
-      ## Distance: use precomputed if available; otherwise compute here
-      if (!is.null(distSlices) && length(distSlices) >= k && !is.null(distSlices[[k]])) {
-        attr(arr3, "distance") <- distSlices[[k]]
-      } else {
-        attr(arr3, "distance") <- .computeDistance_oneMode(arr3)
-      }
+      ## Distance: always recompute from the modified arr3 (after structural 10
+      ## was applied to row k). Precomputed distSlices from sienaDataCreate
+      ## include row k's changes and would overestimate the distance.
+      attr(arr3, "distance") <- .computeDistance_oneMode(arr3)
       
       out[[k]] <- arr3
     }

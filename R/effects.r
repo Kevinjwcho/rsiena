@@ -772,10 +772,19 @@ getEffects <- function(x, nintn = 10, behNintn=4, getDocumentation=FALSE, onePer
 	  for (kk in 1:sl$nslices)
 	  {
 	    # slice_name <- paste0(varname, "[", kk, "]")
-	    dep_slice  <- .coerceSliceToOneMode(depvar, sl$getter(kk))
-	    # 
-	    # ## Force slice symmetry to follow the parent threeway network
-	    attr(dep_slice, "symmetric") <- sym_perc
+	    slice_mat <- sl$getter(kk)
+	    ## Mark row kk as structural zeros (value 10) so that perceiver kk's
+	    ## own self-reported ties are handled exclusively by Y[self].
+	    ## Using structural zeros (10) instead of regular zeros ensures the
+	    ## simulation engine cannot create ties in these positions during
+	    ## ministeps, and the rate function automatically excludes actor kk
+	    ## from making changes in this perceived slice.
+	    slice_mat[kk, , ] <- 10
+	    dep_slice  <- .coerceSliceToOneMode(depvar, slice_mat)
+	    #
+	    ## Force non-symmetric: zeroing row kk breaks symmetry (column kk is kept),
+	    ## so perceived slices are always treated as non-symmetric networks.
+	    attr(dep_slice, "symmetric") <- FALSE
 	    
 	    ## Ensure dep_slice has correct time dimension in netdims
 	    nd_parent <- attr(depvar, "netdims")   # expected c(K, n, n, T)
@@ -840,6 +849,134 @@ getEffects <- function(x, nintn = 10, behNintn=4, getDocumentation=FALSE, onePer
 	  allEffects <- rbind(allEffects, tmpSelf$effects)
 	  ## If needed, you could store tmpSelf$starts as well.
 
+	  ## ★ Cross-network effects between perceived slices and Y[self].
+	  ## This generates crprod, crprodRecip, crprodMutual, etc. automatically
+	  ## by reusing RSiena's existing multi-network effect infrastructure.
+	  ## The C++ side already sees Y[1]..Y[K] and Y[self] as separate oneMode
+	  ## networks (via .expandThreewayToOneModes in initializeFRAN.r), so
+	  ## crprod's OutTieFunction can look up Y[self] by name.
+	  ##
+	  ## Direction 1: perceived slice objective ← Y[self] influence
+	  ##   e.g., crprod for Y[shared]: s_j = sum_k Y[i]_{jk} * Y[self]_{jk}
+	  ##         = sum_k x_{ijk} * x_{jjk}  (perceptual accuracy)
+	  selfName <- paste0(varname, self_tag)     # e.g. "Y[self]"
+	  sharedName <- paste0(varname, "[shared]")  # will be set later by .markSharedDups
+
+	  ## Helper: robust rbind that handles column mismatches between
+	  ## createEffects() output and the accumulated allEffects table.
+	  ## Adds missing columns with type-appropriate defaults, drops extras.
+	  .safeRbind <- function(refDF, newDF) {
+	    refCols <- names(refDF)
+	    newCols <- names(newDF)
+	    ## Columns in ref but not in new: add defaults
+	    for (col in setdiff(refCols, newCols)) {
+	      val <- refDF[[col]]
+	      if (is.list(val)) {
+	        newDF[[col]] <- vector("list", nrow(newDF))
+	      } else if (is.logical(val)) {
+	        newDF[[col]] <- FALSE
+	      } else if (is.numeric(val)) {
+	        newDF[[col]] <- 0
+	      } else if (is.integer(val)) {
+	        newDF[[col]] <- 0L
+	      } else {
+	        newDF[[col]] <- ""
+	      }
+	    }
+	    ## Drop columns in new but not in ref
+	    newDF <- newDF[, refCols, drop = FALSE]
+	    rbind(refDF, newDF)
+	  }
+
+	  ## For each perceived slice, add cross-network effects with Y[self].
+	  ## These will later be deduplicated by shareParameters into Y[shared] + sharedDups.
+	  for (kk in 1:sl$nslices)
+	  {
+	    slice_name <- paste0(varname, "[", kk, "]")
+	    if (!sym_self) {
+	      crossEffs <- createEffects("nonSymmetricNonSymmetricObjective",
+	        selfName, name = slice_name,
+	        groupName = groupName, group = group,
+	        netType = "oneMode")
+	    } else {
+	      crossEffs <- rbind(
+	        createEffects("nonSymmetricSymmetricSObjective",
+	          selfName, name = slice_name,
+	          groupName = groupName, group = group,
+	          netType = "oneMode"),
+	        createEffects("nonSymmetricSymmetricObjective",
+	          selfName, name = slice_name,
+	          groupName = groupName, group = group,
+	          netType = "oneMode")
+	      )
+	    }
+	    crossEffs$sharedDup <- FALSE
+	    allEffects <- .safeRbind(allEffects, crossEffs)
+	  }
+
+	  ## Direction 2: Y[self] objective ← perceived slice influence
+	  ## Two variants made available in the effects catalog:
+	  ##   (1) Single-slice (interaction1 = "Y[1]"):
+	  ##         s_j = sum_k Y[self]_{jk} * Y[1]_{jk}
+	  ##       Only perceiver 1's view drives Y[self] dynamics.
+	  ##   (2) Aggregate     (interaction1 = "Y[shared]"):
+	  ##         s_j = sum_{i=1..K} sum_k Y[self]_{jk} * Y[i]_{jk}
+	  ##       All K perceivers' views drive Y[self] dynamics, tied to one β.
+	  ##       Y[shared] is a VIRTUAL interaction1 marker: initializeFRAN.r
+	  ##       expands it into K rows with interaction1 = Y[1]..Y[K] and
+	  ##       sharedDup cascade so the existing shareParameters machinery
+	  ##       ties them to one parameter. No new C++.
+	  firstName  <- paste0(varname, "[1]")         # real network
+	  sharedIntr <- paste0(varname, "[shared]")    # virtual marker (expanded later)
+	  .dir2_one <- function(i1_name) {
+	    if (!sym_perc) {
+	      out <- createEffects("nonSymmetricNonSymmetricObjective",
+	        i1_name, name = selfName,
+	        groupName = groupName, group = group,
+	        netType = "oneMode")
+	    } else {
+	      out <- rbind(
+	        createEffects("nonSymmetricSymmetricSObjective",
+	          i1_name, name = selfName,
+	          groupName = groupName, group = group,
+	          netType = "oneMode"),
+	        createEffects("nonSymmetricSymmetricObjective",
+	          i1_name, name = selfName,
+	          groupName = groupName, group = group,
+	          netType = "oneMode")
+	      )
+	    }
+	    out$sharedDup <- FALSE
+	    ## Append "[self]" to effectName so that includeEffects(..., name="Y[self]")
+	    ## — which filters with endsWith(effectName, "[self]") — matches these rows.
+	    out$effectName <- paste0(out$effectName, self_tag)
+	    out
+	  }
+	  ## (1) single-slice rows — one per perceived slice Y[1]..Y[K].
+	  ##     Each row is an INDEPENDENT effect (sharedDup=FALSE). The user
+	  ##     picks which slice by interaction1 = "Y[k]".
+	  for (kk in 1:sl$nslices) {
+	    slice_name_kk <- paste0(varname, "[", kk, "]")
+	    crossEffsSelfK <- .dir2_one(slice_name_kk)
+	    allEffects <- .safeRbind(allEffects, crossEffsSelfK)
+	  }
+	  ## (2) aggregate row — virtual interaction1 = "Y[shared]".
+	  ##     initializeFRAN.r expands this single row into K rows
+	  ##     (interaction1 = Y[1]..Y[K]) with sharedDup cascade, so all
+	  ##     K statistics share one β. Only one row lives in the catalog.
+	  crossEffsSelfAgg <- .dir2_one(sharedIntr)
+	  ## Tag effectName so users can tell aggregate from single-slice in print.
+	  ## IMPORTANT: insert " (agg)" BEFORE the trailing "[self]" tag appended by
+	  ## .dir2_one(), so the effectName still ends with "[self]" and survives the
+	  ## endsWith(effectName, "[self]") filter used by includeEffects(name="Y[self]").
+	  ## self_tag == "[self]"; regex-escaped anchor pattern is "\\[self\\]$".
+	  crossEffsSelfAgg$effectName <- sub(
+	    "\\[self\\]$",
+	    paste0(" (agg)", self_tag),
+	    crossEffsSelfAgg$effectName
+	  )
+	  allEffects <- .safeRbind(allEffects, crossEffsSelfAgg)
+
 	  ## ★ shareParameters / sharedCov: mark duplicate objective effects.
 	  ## Canonical copy (Y[1]) gets "(shared)" suffix in effectName and name="Y[shared]".
 	  ## Duplicates (Y[2]..Y[K]) are marked sharedDup=TRUE — hidden from print
@@ -892,6 +1029,17 @@ getEffects <- function(x, nintn = 10, behNintn=4, getDocumentation=FALSE, onePer
 	  if (isTRUE(attr(depvar, "sharedCov"))) {
 	    is_covariate <- is_perc_obj & (allEffects$interaction1 != "")
 	    allEffects <- .markSharedDups(allEffects, is_covariate, varname)
+	  }
+
+	  ## cross-network effects (crprod family): always share across perceived slices.
+	  ## These have interaction1 == "Y[self]" and should be shared regardless of
+	  ## the sharedCov flag, since the cross-network structure is identical per slice.
+	  if (isTRUE(attr(depvar, "shareParameters"))) {
+	    is_cross <- is_perc_obj &
+	                (allEffects$interaction1 == paste0(varname, self_tag))
+	    if (any(is_cross) && !isTRUE(attr(depvar, "sharedCov"))) {
+	      allEffects <- .markSharedDups(allEffects, is_cross, varname)
+	    }
 	  }
 
 	  if (isTRUE(attr(depvar, "shareParameters")) || isTRUE(attr(depvar, "sharedCov"))) {
