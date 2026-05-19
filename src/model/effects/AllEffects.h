@@ -143,4 +143,16 @@
 #include "AgreementTransitivityGMMEffect.h"
 #include "RealTransitivityGMMEffect.h"
 #include "ReciprocityGMMEffect.h"
+// Three-way SAOM perceiver-attribute effects (Group A)
+#include "ThreeWayPerceiverEffect.h"
+#include "ThreeWayPerceiverSenderAgreeEffect.h"
+// NOTE: ThreeWayPerceivedReciprocityEffect was retired (orphan .cpp/.h).
+// Its intra-slice statistic Sigma_i Sigma_j Y[i]_{i,j} * Y[i]_{j,i} is
+// identically zero in this framework because initializeFRAN.r marks the
+// perceiver's own row (Y[i]_{i,*}) as structural-zero (value 10), so the
+// self-reported ties live exclusively in Y[self].  The corrected
+// cross-network statistic Sigma_i Y[self]_{i,j} * Y[i]_{j,i} is now
+// expressed via GenericNetworkEffect + PerceiverRestrictedInTieFunction
+// on Y[self]'s objective; see EffectFactory.cpp:percRecip branch and
+// PerceiverRestrictedInTieFunction.h.
 #endif /*ALLEFFECTS_H_*/

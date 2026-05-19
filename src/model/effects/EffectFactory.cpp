@@ -21,6 +21,7 @@
 #include "model/effects/generic/GenericNetworkEffect.h"
 #include "model/effects/generic/OutTieFunction.h"
 #include "model/effects/generic/InTieFunction.h"
+#include "model/effects/generic/PerceiverRestrictedInTieFunction.h"
 #include "model/effects/generic/ProductFunction.h"
 #include "model/effects/generic/ConstantFunction.h"
 #include "model/effects/generic/InDegreeFunction.h"
@@ -652,6 +653,48 @@ Effect * EffectFactory::createEffect(const EffectInfo * pEffectInfo) const
 	{
 		pEffect = new CovariateEgoEffect(pEffectInfo, false, false);
 	}
+	// Three-way SAOM perceiver-attribute effects (Group A) -----------------
+	else if (effectName == "percX")
+	{
+		pEffect = new ThreeWayPerceiverEffect(pEffectInfo, TW_PERC_EGO);
+	}
+	else if (effectName == "percAltSame")
+	{
+		pEffect = new ThreeWayPerceiverEffect(pEffectInfo, TW_PERC_ALT_SAME);
+	}
+	else if (effectName == "percSenderSame")
+	{
+		pEffect = new ThreeWayPerceiverEffect(pEffectInfo, TW_PERC_SEND_SAME);
+	}
+	else if (effectName == "percSenderAgree")
+	{
+		pEffect = new ThreeWayPerceiverSenderAgreeEffect(pEffectInfo);
+	}
+	else if (effectName == "percRecip")
+	{
+		// Perceiver-restricted perceived reciprocity, implemented on the
+		// objective of each PERCEIVED slice Y[k] (Direction 1).  Y[self]
+		// is structurally locked from evolution in the three-way fork,
+		// so the effect cannot live on Y[self]'s objective — it lives on
+		// Y[k] instead and references Y[self] via interaction1.
+		//
+		// Contribution for toggling Y[k]_{ego, alter}:
+		//   if alter == k - 1   (alter == this slice's perceiver)
+		//     return Y[self]_{alter, ego}    (perceiver's outgoing tie to ego)
+		//   else
+		//     return 0
+		//
+		// Aggregated across the K perceiver slices via the existing
+		// crprod-family share machinery (effects.r ~1034-1042 share-marks
+		// any cross-network row with interaction1 == "Y[self]" under
+		// shareParameters=TRUE on threeway), so all K canonical rows
+		// share a single β.  No new R-side machinery is required.
+		pEffect = new GenericNetworkEffect(pEffectInfo,
+			new PerceiverRestrictedInTieFunction(
+				pEffectInfo->interactionName1(),
+				pEffectInfo->variableName()));
+	}
+	// -----------------------------------------------------------------------
 	else if (effectName == "egoSqX")
 	{
 		pEffect = new CovariateEgoSquaredEffect(pEffectInfo);

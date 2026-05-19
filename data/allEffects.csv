@@ -296,6 +296,10 @@ covarNonSymmetricObjective,xxxxxx right thr. (#) alter,Sum indegr. * (xxxxxx >= 
 covarNonSymmetricObjective,outd. to pos. xxxxxx more(#), sum outd. to pos. xxxxxx more(#),outXMore,TRUE,xxxxxx,,eval,FALSE,FALSE,FALSE,FALSE,FALSE,",",0,0,objective,NA,NA,0,0,0,0,,FALSE
 covarNonSymmetricObjective,xxxxxx ego,Sum outdegrees x xxxxxx,egoX,TRUE,xxxxxx,,eval,FALSE,FALSE,FALSE,FALSE,FALSE,",",0,0,objective,NA,NA,0,0,0,0,ego,FALSE
 covarNonSymmetricObjective,xxxxxx ego,Sum outdegrees x xxxxxx,egoX_gmm,FALSE,xxxxxx,,gmm,FALSE,FALSE,FALSE,TRUE,FALSE,",",0,0,gmm,NA,NA,0,0,0,0,ego,FALSE
+covarNonSymmetricObjective,xxxxxx perceiver ego,Sum ties x perceiver xxxxxx,percX,TRUE,xxxxxx,,eval,FALSE,FALSE,FALSE,FALSE,FALSE,",",0,0,objective,NA,NA,0,0,0,0,ego,FALSE
+covarNonSymmetricObjective,xxxxxx perceiver-alter same,Sum ties x perceiver-alter xxxxxx sim.,percAltSame,TRUE,xxxxxx,,eval,FALSE,FALSE,FALSE,FALSE,FALSE,",",0,0,objective,NA,NA,0,0,0,0,dyadic,FALSE
+covarNonSymmetricObjective,xxxxxx perceiver-sender same,Sum ties x perceiver-sender xxxxxx sim.,percSenderSame,TRUE,xxxxxx,,eval,FALSE,FALSE,FALSE,FALSE,FALSE,",",0,0,objective,NA,NA,0,0,0,0,dyadic,FALSE
+covarNonSymmetricObjective,xxxxxx perceiver-sender agree,Sum ties x self-tie x perceiver-sender xxxxxx sim.,percSenderAgree,TRUE,xxxxxx,,eval,FALSE,FALSE,FALSE,FALSE,FALSE,",",0,0,objective,NA,NA,0,0,0,0,dyadic,FALSE
 covarNonSymmetricObjective,xxxxxx squared ego,Sum outdegrees x sq. xxxxxx,egoSqX,TRUE,xxxxxx,,eval,FALSE,FALSE,FALSE,FALSE,FALSE,",",0,0,objective,NA,NA,0,0,0,0,ego,FALSE
 covarNonSymmetricObjective,xxxxxx left thr. (#) ego,Sum outdegr. * (xxxxxx <= #),egoLThresholdX,TRUE,xxxxxx,,eval,FALSE,FALSE,FALSE,FALSE,FALSE,",",0,0,objective,NA,NA,0,0,0,0,ego,FALSE
 covarNonSymmetricObjective,xxxxxx right thr. (#) ego,Sum outdegr. * (xxxxxx >= #),egoRThresholdX,TRUE,xxxxxx,,eval,FALSE,FALSE,FALSE,FALSE,FALSE,",",0,0,objective,NA,NA,0,0,0,0,ego,FALSE
@@ -392,6 +396,7 @@ bipartiteObjective,outdeg-act-more (sqrt) (#) (ego),Sum outdeg * sqrt outdeg mor
 bipartiteObjective,outdegree-more (#) (ego),Sum outdegrees larger (#),outMore_ego,TRUE,,,eval,FALSE,FALSE,FALSE,FALSE,FALSE,",",0,0,objective,NA,NA,0,0,0,0,ego,TRUE
 nonSymmetricObjective,outdegree (density),Number of ties,density,TRUE,,,eval,FALSE,FALSE,FALSE,FALSE,FALSE,",",0,0,objective,NA,NA,0,0,0,0,dyadic,TRUE
 nonSymmetricObjective,reciprocity,Number of reciprocated ties,recip,TRUE,,,eval,FALSE,FALSE,FALSE,FALSE,FALSE,",",0,0,objective,NA,NA,0,0,0,0,dyadic,TRUE
+nonSymmetricNonSymmetricObjective,perceiver-restricted reciprocity with xxxxxx,sum crprod. with recipr. xxxxxx restricted to ego == perceiver,percRecip,TRUE,xxxxxx,,eval,FALSE,FALSE,FALSE,FALSE,FALSE,",",0,0,objective,NA,NA,0,0,0,0,dyadic,FALSE
 nonSymmetricObjective,new recip.,new reciprocated ties,newrecip,FALSE,,,gmm,FALSE,FALSE,FALSE,TRUE,FALSE,",",0,0,gmm,NA,NA,0,0,0,0,dyadic,FALSE
 nonSymmetricObjective,persistent recip.,persistent rec. ties,persistrecip,FALSE,,,gmm,FALSE,FALSE,FALSE,TRUE,FALSE,",",0,0,gmm,NA,NA,0,0,0,0,dyadic,FALSE
 nonSymmetricObjective,real recip.,real reciprocated ties,realrecip,FALSE,,,gmm,FALSE,FALSE,FALSE,TRUE,FALSE,",",0,0,gmm,NA,NA,0,0,0,0,dyadic,FALSE
