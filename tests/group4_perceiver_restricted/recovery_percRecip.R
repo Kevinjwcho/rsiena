@@ -390,7 +390,7 @@ cat("\n=== Recovery summary ===\n")
 print(summary_tbl, row.names = FALSE, digits = 3)
 
 ## Outputs land next to this script (tests/), regardless of cwd.
-.OUT_DIR <- "/Users/jinwoocho/Desktop/rsiena/tests"
+.OUT_DIR <- "/Users/jinwoocho/Desktop/rsiena/tests/group4_perceiver_restricted/artifacts"
 .summary_path <- file.path(.OUT_DIR, "recovery_percRecip_summary.csv")
 .raw_path     <- file.path(.OUT_DIR, "recovery_percRecip_raw.rds")
 write.csv(summary_tbl, file = .summary_path, row.names = FALSE)
