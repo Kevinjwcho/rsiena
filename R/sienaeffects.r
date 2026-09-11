@@ -12,7 +12,8 @@
 includeEffects <- function(myeff, ..., include=TRUE, name=myeff$name[1],
 						   type="eval", interaction1="", interaction2="",
 						   fix=FALSE, test=FALSE,
-						   character=FALSE, verbose=TRUE)
+						   character=FALSE, verbose=TRUE,
+						   sliceSpecific=FALSE)  # ★ threeway: one parameter per perceived slice
 {
 	if (!inherits(myeff, 'sienaEffects'))
 	{
@@ -133,6 +134,29 @@ includeEffects <- function(myeff, ..., include=TRUE, name=myeff$name[1],
       myeff[dup_rows, "include"] <- include
       myeff[dup_rows, "test"]    <- test
       myeff[dup_rows, "fix"]     <- fix
+    }
+  }
+  ## ★ threeway sliceSpecific: give this effect one free parameter per perceived
+  ## slice while the other effects stay shared (a mixed model). The hidden
+  ## duplicate rows lose their sharedDup flag, so initializeFRAN forms no share
+  ## group for them, each keeps its own target and is estimated on its own; the
+  ## canonical "Y[shared]" row goes back to being slice 1's row. Same effect as
+  ## sienaDependent(..., sliceSpecific = <shortName>), but decided per effect
+  ## at the point where it is requested.
+  if (isTRUE(sliceSpecific) && !is.null(myeff$sharedDup) && sliceTag %in% c("[shared]", "")) {
+    for (sn in unique(myeff$shortName[use])) {
+      rows <- myeff$shortName == sn & myeff$type == type &
+              myeff$interaction1 == interaction1 & myeff$interaction2 == interaction2 &
+              grepl("\\[(shared|[0-9]+)\\]$", myeff$name)
+      myeff$sharedDup[rows] <- FALSE
+      myeff[rows, "include"] <- include
+      myeff[rows, "test"]    <- test
+      myeff[rows, "fix"]     <- fix
+      ## the canonical row keeps its name "Y[shared]" (siena07 validates requested
+      ## effects by name against the data's effect table); only its label changes
+      canon <- rows & grepl("\\[shared\\]$", myeff$name)
+      myeff$effectName[canon] <- paste0(sub("\\s*\\(shared\\)$", "", myeff$effectName[canon]), "[1]")
+      use <- use | rows
     }
   }
   	if (sum(myeff[use, "type"]=="gmm") > 0)

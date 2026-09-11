@@ -416,6 +416,7 @@ sienaDependent <- function(netarray,
                            type = c("oneMode","bipartite","behavior","continuous","threeway"), # ★ threeway added
                            shareParameters = FALSE,
                            sharedCov = FALSE,
+                           sliceSpecific = character(0),  # ★ threeway: effects (shortNames) kept perceiver-specific under shareParameters
                            nodeSet = "Actors",
                            sparse = is.list(netarray),
                            allowOnly = TRUE,
@@ -694,6 +695,7 @@ sienaDependent <- function(netarray,
   attr(obj, "allowOnly") <- allowOnly
   attr(obj, "shareParameters") <- shareParameters
   attr(obj, "sharedCov")       <- sharedCov
+  attr(obj, "sliceSpecific")   <- as.character(sliceSpecific)
 
 
   if (!is.null(imputationValues))

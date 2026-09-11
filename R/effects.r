@@ -1019,15 +1019,23 @@ getEffects <- function(x, nintn = 10, behNintn=4, getDocumentation=FALSE, onePer
 	  is_perc_obj <- !allEffects$basicRate &
 	                 grepl("\\[[0-9]+\\]$", allEffects$name)
 
+	  ## ★ sliceSpecific: effects named here keep one parameter per perceived
+	  ## slice even when shareParameters = TRUE (a mixed model, e.g. a
+	  ## perceiver-specific density with everything else shared). They are
+	  ## simply excluded from the duplicate marking, so their rows stay free.
+	  slice_specific <- attr(depvar, "sliceSpecific")
+	  if (is.null(slice_specific)) slice_specific <- character(0)
+	  keep_free <- allEffects$shortName %in% slice_specific
+
 	  ## structural effects: interaction1 == ""
 	  if (isTRUE(attr(depvar, "shareParameters"))) {
-	    is_structural <- is_perc_obj & (allEffects$interaction1 == "")
+	    is_structural <- is_perc_obj & (allEffects$interaction1 == "") & !keep_free
 	    allEffects <- .markSharedDups(allEffects, is_structural, varname)
 	  }
 
 	  ## covariate effects: interaction1 != ""
 	  if (isTRUE(attr(depvar, "sharedCov"))) {
-	    is_covariate <- is_perc_obj & (allEffects$interaction1 != "")
+	    is_covariate <- is_perc_obj & (allEffects$interaction1 != "") & !keep_free
 	    allEffects <- .markSharedDups(allEffects, is_covariate, varname)
 	  }
 
@@ -1035,7 +1043,7 @@ getEffects <- function(x, nintn = 10, behNintn=4, getDocumentation=FALSE, onePer
 	  ## These have interaction1 == "Y[self]" and should be shared regardless of
 	  ## the sharedCov flag, since the cross-network structure is identical per slice.
 	  if (isTRUE(attr(depvar, "shareParameters"))) {
-	    is_cross <- is_perc_obj &
+	    is_cross <- is_perc_obj & !keep_free &
 	                (allEffects$interaction1 == paste0(varname, self_tag))
 	    if (any(is_cross) && !isTRUE(attr(depvar, "sharedCov"))) {
 	      allEffects <- .markSharedDups(allEffects, is_cross, varname)
