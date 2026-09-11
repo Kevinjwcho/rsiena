@@ -1068,6 +1068,11 @@ Effect * EffectFactory::createEffect(const EffectInfo * pEffectInfo) const
 		pEffect = new GenericNetworkEffect(pEffectInfo,
 			new OutTieFunction(pEffectInfo->interactionName1()));
 	}
+	else if (effectName == "crprodCent")
+	{
+		pEffect = new GenericNetworkEffect(pEffectInfo,
+			new CenteredOutTieFunction(pEffectInfo->interactionName1()));
+	}
 	else if (effectName == "crprod_gmm")
 	{
 		pEffect = new GenericNetworkEffect(pEffectInfo,

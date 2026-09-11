@@ -36,6 +36,27 @@ public:
 	virtual double value(int alter) const;
 };
 
+/**
+ * Centered version of OutTieFunction: returns the tie value minus a constant
+ * fixed at the mean tie value of the network at its first observation. Used
+ * for cross-network effects whose predictor is another dependent network, so
+ * that the effect is not a second density effect (three-way Group 2).
+ */
+class CenteredOutTieFunction: public OutTieFunction
+{
+public:
+	CenteredOutTieFunction(std::string networkName);
+	virtual void initialize(const Data * pData,
+		State * pState, int period, Cache * pCache);
+	virtual void initialize(const Data * pData,
+		State * pState, State * pSimulatedState, int period, Cache * pCache);
+	virtual double value(int alter) const;
+	double center() const { return this->lcenter; }
+private:
+	void computeCenter(const Data * pData);
+	double lcenter {};
+};
+
 }
 
 #endif /* OUTTIEFUNCTION_H_ */
